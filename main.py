@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 # --- CONFIGURAÇÃO ---
+# Certifique-se de que a variável TELEGRAM_TOKEN esteja configurada no painel do Render
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 fila_comandos = queue.Queue()
 
@@ -16,19 +17,31 @@ telegram_app = None
 
 # --- LÓGICA DO TELEGRAM ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Online e pronto, Senhor!")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Online, Senhor. Às suas ordens.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.lower()
     
-    if "abre" in texto:
+    # Comandos para abrir aplicativos
+    if "abre" in texto or "abrir" in texto:
         arg = texto.split(" ")[-1]
         fila_comandos.put({"acao": "open_app", "argumento": arg})
-        await update.message.reply_text(f"Comando enviado ao seu computador, Senhor: Abrir {arg}")
+        await update.message.reply_text(f"Comando enviado: Abrir {arg}")
+        
+    # Comando para reiniciar
+    elif "reinicia" in texto or "reiniciar" in texto:
+        fila_comandos.put({"acao": "restart", "argumento": None})
+        await update.message.reply_text("Comando enviado: Reiniciando o sistema.")
+        
+    # Comando para desligar
+    elif "desliga" in texto or "desligar" in texto:
+        fila_comandos.put({"acao": "shutdown", "argumento": None})
+        await update.message.reply_text("Comando enviado: Desligando o computador.")
+        
     else:
-        await update.message.reply_text("Entendido, mas não sei como processar este comando ainda.")
+        await update.message.reply_text("Não compreendi o comando, Senhor.")
 
-# --- EVENTOS DE INICIALIZAÇÃO E ENCERRAMENTO DO FASTAPI ---
+# --- EVENTOS DE INICIALIZAÇÃO ---
 @app.on_event("startup")
 async def startup_event():
     global telegram_app
@@ -37,7 +50,6 @@ async def startup_event():
         telegram_app.add_handler(CommandHandler("start", start))
         telegram_app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
         
-        # Inicializa e inicia o bot de forma segura no loop do FastAPI
         await telegram_app.initialize()
         await telegram_app.start()
         await telegram_app.updater.start_polling()
@@ -57,6 +69,7 @@ def home():
 
 @app.get("/pegar-comando")
 def pegar_comando():
+    # Retorna o comando se houver, senão retorna um status indicando vazio
     if not fila_comandos.empty():
         return fila_comandos.get()
     return {"status": "vazio"}
