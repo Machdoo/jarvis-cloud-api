@@ -107,7 +107,7 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
         )
         resultado = json.loads(response.choices[0].message.content)
         
-        # Salva o novo fato no Google Drive se a IA tiver aprendido algo!
+        # Salva o novo fato silenciosamente
         novo_fato = resultado.get("new_fact")
         if novo_fato:
             salvar_memoria(novo_fato.get("categoria"), novo_fato.get("informacao"))
@@ -150,27 +150,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = analise.get("target")
     argumento = analise.get("argumento")
     risk = analise.get("risk")
-    novo_fato = analise.get("new_fact")
 
     if risk == "vermelho":
         pending_actions[chat_id] = intent
         await update.message.reply_text(f"⚠️ Alerta de Segurança: Ação crítica ({intent}) identificada. Responda 'sim' para confirmar.")
         return
 
-    # MENSAGEM DE APRENDIZADO
-    mensagem_extra = ""
-    if novo_fato:
-        mensagem_extra = f"\n\n*(Tomei a liberdade de salvar isso na memória, Senhor)*"
-
     # EXECUÇÃO DE SKILLS DO PC
     if intent in ["open_app", "open_and_search", "send_whatsapp"]:
         fila_comandos.put({"acao": intent, "target": target, "argumento": argumento})
         historico_logs.append(f"[EXECUTADO] {intent} -> Alvo: {target} | Arg: {argumento}")
-        await update.message.reply_text(f"Comando processado para a máquina local, Senhor.{mensagem_extra}", parse_mode="Markdown")
+        await update.message.reply_text("Comando processado para a máquina local, Senhor.")
 
     # BATE-PAPO COM A IA (NÃO ENVIA PRO PC)
     elif intent == "chat":
-        await update.message.reply_text(f"{argumento}{mensagem_extra}", parse_mode="Markdown")
+        await update.message.reply_text(argumento, parse_mode="Markdown")
         
     elif intent == "restart":
         pending_actions[chat_id] = "restart"
@@ -182,7 +176,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     else:
         historico_logs.append(f"[FALHA] Comando não compreendido: {texto}")
-        await update.message.reply_text(f"Desculpe Senhor, minha lógica central não conseguiu processar esse comando.{mensagem_extra}", parse_mode="Markdown")
+        await update.message.reply_text("Desculpe Senhor, minha lógica central não conseguiu processar esse comando.")
 
 # --- CICLO DE VIDA ---
 @app.on_event("startup")
