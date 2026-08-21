@@ -6,13 +6,14 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 # --- CONFIGURAÇÃO ---
-# Certifique-se de que a variável TELEGRAM_TOKEN esteja configurada no painel do Render
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 fila_comandos = queue.Queue()
 
-app = FastAPI()
+# Dicionário para gerenciar confirmações pendentes por usuário
+# (Isso garante que ele saiba quem está respondendo ao pedido de confirmação)
+pending_actions = {} 
 
-# Variável global para gerenciar o bot
+app = FastAPI()
 telegram_app = None
 
 # --- LÓGICA DO TELEGRAM ---
@@ -20,28 +21,42 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Online, Senhor. Às suas ordens.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global pending_actions
     texto = update.message.text.lower()
-    
+    chat_id = update.effective_chat.id
+
+    # 1. VERIFICAÇÃO DE CONFIRMAÇÃO PENDENTE
+    if chat_id in pending_actions:
+        if "sim" in texto or "confirmo" in texto:
+            acao_confirmada = pending_actions.pop(chat_id)
+            fila_comandos.put({"acao": acao_confirmada, "argumento": None})
+            await update.message.reply_text(f"Comando confirmado, Senhor. Executando: {acao_confirmada}.")
+        else:
+            pending_actions.pop(chat_id)
+            await update.message.reply_text("Operação cancelada, Senhor.")
+        return
+
+    # 2. PROCESSAMENTO DE NOVOS COMANDOS
     # Comandos para abrir aplicativos
     if "abre" in texto or "abrir" in texto:
         arg = texto.split(" ")[-1]
         fila_comandos.put({"acao": "open_app", "argumento": arg})
         await update.message.reply_text(f"Comando enviado: Abrir {arg}")
         
-    # Comando para reiniciar
+    # Comando para reiniciar (Com confirmação)
     elif "reinicia" in texto or "reiniciar" in texto:
-        fila_comandos.put({"acao": "restart", "argumento": None})
-        await update.message.reply_text("Comando enviado: Reiniciando o sistema.")
+        pending_actions[chat_id] = "restart"
+        await update.message.reply_text("⚠️ Tem certeza que deseja REINICIAR o computador? Responda 'sim' para confirmar.")
         
-    # Comando para desligar
+    # Comando para desligar (Com confirmação)
     elif "desliga" in texto or "desligar" in texto:
-        fila_comandos.put({"acao": "shutdown", "argumento": None})
-        await update.message.reply_text("Comando enviado: Desligando o computador.")
+        pending_actions[chat_id] = "shutdown"
+        await update.message.reply_text("⚠️ Tem certeza que deseja DESLIGAR o computador? Responda 'sim' para confirmar.")
         
     else:
         await update.message.reply_text("Não compreendi o comando, Senhor.")
 
-# --- EVENTOS DE INICIALIZAÇÃO ---
+# --- EVENTOS DE CICLO DE VIDA ---
 @app.on_event("startup")
 async def startup_event():
     global telegram_app
@@ -69,7 +84,6 @@ def home():
 
 @app.get("/pegar-comando")
 def pegar_comando():
-    # Retorna o comando se houver, senão retorna um status indicando vazio
     if not fila_comandos.empty():
         return fila_comandos.get()
     return {"status": "vazio"}
