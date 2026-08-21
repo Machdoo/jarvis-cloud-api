@@ -1,11 +1,13 @@
 import os
 import json
 import logging
+from datetime import datetime
 from fastapi import FastAPI
 import queue
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from groq import Groq
+import gspread
 
 # --- CONFIGURAÇÃO DE LOGS ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -13,7 +15,8 @@ logger = logging.getLogger("JARVIS_CORE")
 
 # --- CREDENCIAIS ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY") 
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 fila_comandos = queue.Queue()
@@ -24,26 +27,74 @@ user_context = {}
 app = FastAPI()
 telegram_app = None
 
+# --- CONEXÃO COM GOOGLE SHEETS (MEMÓRIA) ---
+planilha_memoria = None
+if GOOGLE_CREDENTIALS:
+    try:
+        creds_dict = json.loads(GOOGLE_CREDENTIALS)
+        gc = gspread.service_account_from_dict(creds_dict)
+        planilha_memoria = gc.open("JARVIS_Memoria").sheet1
+        logger.info("Conectado à Memória Permanente (Google Sheets) com sucesso!")
+    except Exception as e:
+        logger.error(f"Erro ao conectar no Google Sheets: {e}")
+
+def carregar_memoria():
+    if not planilha_memoria: return "Nenhuma memória conectada."
+    try:
+        registros = planilha_memoria.get_all_records()
+        if not registros: return "A memória ainda está vazia."
+        
+        texto_memoria = ""
+        for linha in registros:
+            texto_memoria += f"- {linha.get('Categoria', 'Geral')}: {linha.get('Informação', '')}\n"
+        return texto_memoria
+    except Exception as e:
+        logger.error(f"Erro ao ler memória: {e}")
+        return "Erro ao acessar memória."
+
+def salvar_memoria(categoria, informacao):
+    if not planilha_memoria: return
+    try:
+        data_atual = datetime.now().strftime("%d/%m/%Y %H:%M")
+        planilha_memoria.append_row([data_atual, categoria, informacao])
+        logger.info(f"Nova memória salva: {categoria} - {informacao}")
+    except Exception as e:
+        logger.error(f"Erro ao salvar na memória: {e}")
+
 # --- MOTOR DE INTENÇÃO E CONTEXTO (GROQ) ---
 def analisar_intencao(texto_usuario: str, chat_id: int):
     if not client:
-        return {"intent": "unknown", "target": None, "argumento": None, "risk": "verde"}
+        return {"intent": "unknown", "target": None, "argumento": None, "risk": "verde", "new_fact": None}
     
     contexto_anterior = user_context.get(chat_id, {"last_intent": None, "last_target": None})
+    memoria_atual = carregar_memoria()
     
     prompt = f"""
-    Você é o cérebro do assistente J.A.R.V.I.S. 
-    Contexto anterior:
+    Você é o assistente virtual J.A.R.V.I.S.
+    
+    --- FATOS SOBRE O USUÁRIO (MEMÓRIA PERMANENTE) ---
+    {memoria_atual}
+    
+    --- CONTEXTO DA CONVERSA ANTERIOR ---
     - Última intenção: {contexto_anterior.get('last_intent')}
     - Último alvo: {contexto_anterior.get('last_target')}
 
-    Analise o comando atual considerando o contexto. Retorne APENAS um JSON válido com a estrutura exata:
+    Instruções:
+    1. Analise o comando.
+    2. Identifique se você DEVE APRENDER algo novo sobre o usuário (uma preferência, um nome, um projeto, rotina).
+    3. Retorne APENAS um JSON válido com a estrutura:
     {{
-      "intent": "open_app" | "open_and_search" | "send_whatsapp" | "restart" | "shutdown" | "unknown",
-      "target": "nome do app, site ou número de telefone (se for whatsapp)",
-      "argumento": "termo de pesquisa ou mensagem a ser enviada, ou null se não houver",
-      "risk": "verde" ou "vermelho" (vermelho apenas para restart ou shutdown)
+      "intent": "open_app" | "open_and_search" | "send_whatsapp" | "restart" | "shutdown" | "chat" | "unknown",
+      "target": "nome do app, site, ou número (ou null)",
+      "argumento": "termo de busca, ou a MENSAGEM que você vai responder se a intent for 'chat' (ou null)",
+      "risk": "verde" ou "vermelho",
+      "new_fact": {{
+          "categoria": "Preferência|Contato|Rotina|Projeto|Outros",
+          "informacao": "Fato novo e resumido que você aprendeu nesta mensagem"
+      }} // Retorne null se não houver nada de novo para salvar.
     }}
+    
+    Nota: Se for apenas uma conversa, cumprimento, ou pergunta que você saiba responder, use a intent "chat" e coloque a sua resposta no campo "argumento", falando como o J.A.R.V.I.S. falaria com o Senhor.
     
     Comando atual: "{texto_usuario}"
     """
@@ -56,6 +107,11 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
         )
         resultado = json.loads(response.choices[0].message.content)
         
+        # Salva o novo fato no Google Drive se a IA tiver aprendido algo!
+        novo_fato = resultado.get("new_fact")
+        if novo_fato:
+            salvar_memoria(novo_fato.get("categoria"), novo_fato.get("informacao"))
+            
         if resultado.get("intent") != "unknown":
             user_context[chat_id] = {
                 "last_intent": resultado.get("intent"),
@@ -65,54 +121,57 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
         return resultado
     except Exception as e:
         logger.error(f"Erro na IA: {e}")
-        return {"intent": "unknown", "target": None, "argumento": None, "risk": "verde"}
+        return {"intent": "unknown", "target": None, "argumento": None, "risk": "verde", "new_fact": None}
 
 # --- LÓGICA DO TELEGRAM ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Core Online com Contexto e Múltiplas Skills Ativos, Senhor.")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Core Online. Acesso à Memória Permanente estabelecido, Senhor.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global pending_actions, historico_logs
     texto = update.message.text
     chat_id = update.effective_chat.id
 
-    # 1. VERIFICAÇÃO DE CONFIRMAÇÃO PENDENTE (RISCO VERMELHO)
+    # VERIFICAÇÃO DE RISCO (Ações de desligar PC)
     if chat_id in pending_actions:
         if "sim" in texto.lower() or "confirmo" in texto.lower():
             acao_confirmada = pending_actions.pop(chat_id)
             fila_comandos.put({"acao": acao_confirmada, "target": None, "argumento": None})
-            
-            log_msg = f"[EXECUTADO] Ação crítica confirmada: {acao_confirmada}"
-            historico_logs.append(log_msg)
+            historico_logs.append(f"[EXECUTADO] Ação crítica: {acao_confirmada}")
             await update.message.reply_text(f"Comando confirmado, Senhor. Executando: {acao_confirmada}.")
         else:
             pending_actions.pop(chat_id)
             await update.message.reply_text("Operação cancelada, Senhor.")
         return
 
-    # 2. ANÁLISE DE INTENÇÃO
+    # ANÁLISE DE INTENÇÃO
     analise = analisar_intencao(texto, chat_id)
     intent = analise.get("intent")
     target = analise.get("target")
     argumento = analise.get("argumento")
     risk = analise.get("risk")
+    novo_fato = analise.get("new_fact")
 
-    # 3. SEGURANÇA
     if risk == "vermelho":
         pending_actions[chat_id] = intent
         await update.message.reply_text(f"⚠️ Alerta de Segurança: Ação crítica ({intent}) identificada. Responda 'sim' para confirmar.")
         return
 
-    # 4. EXECUÇÃO DE SKILLS
+    # MENSAGEM DE APRENDIZADO
+    mensagem_extra = ""
+    if novo_fato:
+        mensagem_extra = f"\n\n*(Tomei a liberdade de salvar isso na memória, Senhor)*"
+
+    # EXECUÇÃO DE SKILLS DO PC
     if intent in ["open_app", "open_and_search", "send_whatsapp"]:
-        if target:
-            fila_comandos.put({"acao": intent, "target": target, "argumento": argumento})
-            log_msg = f"[EXECUTADO] {intent} -> Alvo: {target} | Arg: {argumento}"
-            historico_logs.append(log_msg)
-            await update.message.reply_text(f"Processando comando para {target}, Senhor.")
-        else:
-            await update.message.reply_text("Não consegui identificar o alvo da ação, Senhor.")
-            
+        fila_comandos.put({"acao": intent, "target": target, "argumento": argumento})
+        historico_logs.append(f"[EXECUTADO] {intent} -> Alvo: {target} | Arg: {argumento}")
+        await update.message.reply_text(f"Comando processado para a máquina local, Senhor.{mensagem_extra}", parse_mode="Markdown")
+
+    # BATE-PAPO COM A IA (NÃO ENVIA PRO PC)
+    elif intent == "chat":
+        await update.message.reply_text(f"{argumento}{mensagem_extra}", parse_mode="Markdown")
+        
     elif intent == "restart":
         pending_actions[chat_id] = "restart"
         await update.message.reply_text("⚠️ Tem certeza que deseja REINICIAR o computador? Responda 'sim' para confirmar.")
@@ -123,7 +182,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     else:
         historico_logs.append(f"[FALHA] Comando não compreendido: {texto}")
-        await update.message.reply_text("Intenção não reconhecida pelo núcleo do J.A.R.V.I.S., Senhor.")
+        await update.message.reply_text(f"Desculpe Senhor, minha lógica central não conseguiu processar esse comando.{mensagem_extra}", parse_mode="Markdown")
 
 # --- CICLO DE VIDA ---
 @app.on_event("startup")
@@ -148,14 +207,10 @@ async def shutdown_event():
 
 @app.get("/")
 def home():
-    return {"status": "Jarvis Core Cloud Completo e Ativo, Senhor!"}
+    return {"status": "Jarvis Core com Memória Neural Online, Senhor!"}
 
 @app.get("/pegar-comando")
 def pegar_comando():
     if not fila_comandos.empty():
         return fila_comandos.get()
     return {"status": "vazio"}
-
-@app.get("/logs")
-def ver_logs():
-    return {"historico": historico_logs[-10:]}
