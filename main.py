@@ -55,7 +55,7 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
     
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="qwen/qwen3.6-27b",  # Modelo validado e disponível na sua conta
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
