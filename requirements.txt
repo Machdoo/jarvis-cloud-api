@@ -2,4 +2,4 @@ fastapi
 uvicorn
 pydantic
 python-telegram-bot
-openai
+groq
