@@ -114,21 +114,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Alerta de Segurança: Ação crítica ({intent}) identificada. Responda 'sim' para confirmar.")
         return
 
-    # 4. EXECUÇÃO DE SKILLS
-    if intent == "open_app" or intent == "search":
+    # 4. EXECUÇÃO DE SKILLS (Com normalização de intenções da IA)
+    intent_normalizada = intent.lower() if intent else "unknown"
+    
+    if intent_normalizada in ["open_app", "open", "abrir", "iniciar", "launch"]:
+        intent_normalizada = "open_app"
+
+    if intent_normalizada == "open_app" or intent_normalizada == "search":
         if target:
-            fila_comandos.put({"acao": intent, "argumento": target})
-            log_msg = f"[EXECUTADO] Skill {intent} acionada para: {target}"
+            fila_comandos.put({"acao": intent_normalizada, "argumento": target})
+            log_msg = f"[EXECUTADO] Skill {intent_normalizada} acionada para: {target}"
             historico_logs.append(log_msg)
-            await update.message.reply_text(f"Processando comando: {intent} -> {target}")
+            await update.message.reply_text(f"Processando comando: {target}, Senhor.")
         else:
             await update.message.reply_text("Não consegui identificar o alvo da ação, Senhor.")
             
-    elif intent == "restart":
+    elif intent_normalizada == "restart":
         pending_actions[chat_id] = "restart"
         await update.message.reply_text("⚠️ Tem certeza que deseja REINICIAR o computador? Responda 'sim' para confirmar.")
         
-    elif intent == "shutdown":
+    elif intent_normalizada == "shutdown":
         pending_actions[chat_id] = "shutdown"
         await update.message.reply_text("⚠️ Tem certeza que deseja DESLIGAR o computador? Responda 'sim' para confirmar.")
         
