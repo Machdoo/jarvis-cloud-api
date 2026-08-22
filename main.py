@@ -70,32 +70,32 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
     memoria_atual = carregar_memoria()
     
     prompt = f"""
-    Você é o assistente virtual J.A.R.V.I.S.
+    Você é o assistente virtual J.A.R.V.I.S., mas com uma camada profunda de lealdade, empatia e inteligência emocional com o Senhor.
     
     --- FATOS SOBRE O USUÁRIO (MEMÓRIA PERMANENTE) ---
     {memoria_atual}
 
     Instruções:
     1. Analise o comando do usuário.
-    2. Identifique se você DEVE APRENDER algo novo (preferência, nome, rotina).
+    2. Identifique se você DEVE APRENDER algo novo sobre ele (preferência, nome, rotina, estado emocional importante).
     3. Retorne APENAS um JSON válido com a estrutura abaixo:
     {{
       "intent": "open_app" | "open_and_search" | "send_whatsapp" | "media_control" | "set_volume" | "restart" | "shutdown" | "chat" | "web_search" | "unknown",
       "target": "ação de mídia ('play_pause', 'next', 'prev') ou app/site/número (ou null)",
-      "argumento": "termo de busca, valor do volume (ex: '50'), mensagem de chat, ou o que pesquisar na internet (ou null)",
+      "argumento": "termo de busca, valor do volume, mensagem de chat/desabafo respondida com empatia e acolhimento, ou o que pesquisar na internet (ou null)",
       "risk": "verde" ou "vermelho",
       "new_fact": {{
-          "categoria": "Preferência|Contato|Rotina|Projeto|Outros",
-          "informacao": "Fato novo e resumido que você aprendeu nesta mensagem"
+          "categoria": "Preferência|Contato|Rotina|Projeto|Emocional|Outros",
+          "informacao": "Fato novo ou estado emocional relevante que você aprendeu nesta mensagem"
       }} // Retorne null se não houver nada de novo para salvar.
     }}
     
-    Regras de Intenções:
-    - media_control: Para pausar, tocar, avançar ou voltar músicas. Target deve ser 'play_pause', 'next' ou 'prev'.
-    - set_volume: Para alterar o volume do PC. Argumento deve ser o número de 0 a 100.
+    Regras de Personalidade e Comportamento:
+    - Se o usuário demonstrar cansaço, estresse, desabafo ou vulnerabilidade, use a intent "chat". No campo "argumento", responda com uma postura extremamente acolhedora, empática, respeitosa e de apoio, como um confidente leal que se importa com o bem-estar dele, sem perder a classe do J.A.R.V.I.S.
+    - media_control: Para pausar, tocar, avançar ou voltar músicas (target: 'play_pause', 'next', 'prev').
+    - set_volume: Para alterar o volume do PC (argumento: número de 0 a 100).
     - open_and_search: Abrir apps/sites no PC e pesquisar.
     - web_search: Pesquisar coisas na internet para te responder no chat.
-    - chat: Conversa comum.
     
     Comando atual: "{texto_usuario}"
     """
@@ -120,7 +120,7 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
 
 # --- LÓGICA DO TELEGRAM ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Core Online com Controles de Mídia, Memória e Internet, Senhor.")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Core Online. Estou à sua inteira disposição, Senhor — para o que precisar.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global pending_actions
@@ -148,10 +148,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Alerta de Segurança: Ação crítica ({intent}) identificada. Responda 'sim' para confirmar.")
         return
 
-    # ENVIA PARA O AGENTE LOCAL DO PC (Apps, WhatsApp, Mídia e Volume)
+    # ENVIA PARA O AGENTE LOCAL DO PC
     if intent in ["open_app", "open_and_search", "send_whatsapp", "media_control", "set_volume"]:
         fila_comandos.put({"acao": intent, "target": target, "argumento": argumento})
-        await update.message.reply_text("Comando de mídia/sistema enviado para a máquina local, Senhor.")
+        await update.message.reply_text("Comando processado para a máquina local, Senhor.")
 
     # PESQUISA NA WEB
     elif intent == "web_search":
@@ -166,12 +166,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 model="qwen/qwen3.6-27b",
                 messages=[{"role": "user", "content": prompt_resposta}]
             )
-            await mensagem_status.edit_text(resp.choices.completions[0].message.content if hasattr(resp, 'choices') else resp.choices[0].message.content, parse_mode="Markdown")
+            resposta_texto = resp.choices[0].message.content if hasattr(resp.choices[0].message, 'content') else ""
+            await mensagem_status.edit_text(resposta_texto, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"Erro na pesquisa web: {e}")
             await mensagem_status.edit_text("Desculpe, Senhor. Meus protocolos de acesso à rede falharam.")
 
-    # BATE-PAPO
+    # BATE-PAPO / ACOLHIMENTO
     elif intent == "chat":
         await update.message.reply_text(argumento, parse_mode="Markdown")
         
@@ -209,7 +210,7 @@ async def shutdown_event():
 
 @app.get("/")
 def home():
-    return {"status": "Jarvis Core Online com Controles Totais!"}
+    return {"status": "Jarvis Core com Inteligência Emocional e Controles Totais Online!"}
 
 @app.get("/pegar-comando")
 def pegar_comando():
