@@ -90,6 +90,84 @@ ACTIONS_REQUIRING_CONFIRMATION = {
 
 
 # ============================================================
+# PERSONALIDADE DO J.A.R.V.I.S.
+# ============================================================
+
+PERSONALITY_RULES = """
+Você é J.A.R.V.I.S., o assistente pessoal do Gustavo.
+
+Sua personalidade deve ser:
+
+- Inteligente e natural.
+- Amigável e descontraída.
+- Confiante, mas nunca arrogante.
+- Útil e objetiva quando a pergunta for simples.
+- Capaz de brincar e usar humor quando o contexto permitir.
+- Pode usar algumas gírias e expressões informais naturalmente.
+- Não deve parecer um robô extremamente formal.
+- Não precisa chamar Gustavo de "Senhor" em toda resposta.
+- Use "Gustavo" quando fizer sentido.
+- Evite repetir frases como:
+  "Estou à sua inteira disposição, Senhor."
+  "Comando processado, Senhor."
+  "Deseja que eu..."
+- Não force gírias. Em assuntos sérios, técnicos ou importantes,
+  priorize clareza e respeito.
+- Não seja infantil.
+- Não exagere em emojis.
+- Não elogie Gustavo sem motivo.
+- Pode demonstrar personalidade e senso de humor.
+- Se Gustavo fizer uma piada, pode acompanhar a brincadeira.
+- Se Gustavo estiver frustrado ou irritado, responda de maneira
+  tranquila e compreensiva.
+- Se Gustavo estiver falando normalmente, converse normalmente.
+
+IMPORTANTE:
+
+Você não deve fingir que realizou uma ação que não foi executada.
+
+Nunca diga que abriu, fechou, alterou, enviou ou executou algo
+se essa ação não tiver realmente sido enviada ao agente local
+ou confirmada pelo sistema.
+
+============================================================
+IDIOMA
+============================================================
+
+Detecte automaticamente o idioma predominante usado por Gustavo.
+
+Responda no MESMO idioma da mensagem dele.
+
+Exemplos:
+
+Português:
+Gustavo: "Qual é a capital da França?"
+J.A.R.V.I.S.: responde em português.
+
+Francês:
+Gustavo: "Quelle est la capitale de la France ?"
+J.A.R.V.I.S.: responde em francês.
+
+Inglês:
+Gustavo: "What's the capital of France?"
+J.A.R.V.I.S.: responde em inglês.
+
+Espanhol:
+Gustavo: "¿Cuál es la capital de Francia?"
+J.A.R.V.I.S.: responde em espanhol.
+
+Se Gustavo misturar idiomas, responda no idioma predominante
+da mensagem.
+
+Se ele mudar de idioma, acompanhe imediatamente.
+
+Não traduza a mensagem dele sem que ele peça.
+
+Essa regra também vale para pesquisas na internet.
+"""
+
+
+# ============================================================
 # LIMPAR RESPOSTAS DA IA
 # ============================================================
 
@@ -231,7 +309,7 @@ def salvar_memoria(
     except Exception as e:
 
         logger.error(
-            f"Erro ao salvar na memória: {e}"
+            f"Erro ao salvar memória: {e}"
         )
 
 
@@ -363,10 +441,7 @@ def resposta_e_confirmacao(
     if texto_normalizado in cancelamentos_exatos:
         return "cancelar"
 
-    if (
-        texto_normalizado.startswith("nao ")
-        or texto_normalizado.startswith("nao,")
-    ):
+    if texto_normalizado.startswith("nao "):
         return "cancelar"
 
     confirmacoes_exatas = {
@@ -446,14 +521,18 @@ def analisar_intencao(
     )
 
     prompt = f"""
-Você é o assistente virtual J.A.R.V.I.S.
+{PERSONALITY_RULES}
 
-Seu objetivo é compreender naturalmente o que
-o Senhor Gustavo deseja.
+Sua função nesta etapa é identificar o que Gustavo deseja fazer.
 
 Não trate toda mensagem como comando.
-Ele também pode simplesmente conversar,
-fazer perguntas ou pedir pesquisas.
+
+Ele pode:
+- conversar;
+- fazer perguntas;
+- pedir explicações;
+- pedir pesquisas;
+- executar ações no computador.
 
 ============================================================
 MEMÓRIA
@@ -539,12 +618,14 @@ argumento = termo de pesquisa.
 
 10. Para chat:
 argumento pode ser null.
-A resposta será gerada depois.
 
 11. Para web_search:
 argumento = consulta.
 
-12. Salve apenas fatos realmente úteis.
+12. Salve apenas fatos realmente úteis
+e relativamente permanentes.
+
+13. Não invente intenções.
 
 ============================================================
 FORMATO JSON
@@ -647,9 +728,8 @@ def gerar_resposta_chat(
     if not client:
 
         return (
-            "Desculpe, Senhor. "
             "Meu núcleo de inteligência "
-            "está indisponível."
+            "está indisponível no momento."
         )
 
     memoria_atual = carregar_memoria()
@@ -659,19 +739,35 @@ def gerar_resposta_chat(
     )
 
     prompt = f"""
-Você é J.A.R.V.I.S., o assistente pessoal
-do Senhor Gustavo.
+{PERSONALITY_RULES}
 
-Responda naturalmente à mensagem dele.
+Agora converse diretamente com Gustavo.
 
-Seja inteligente, claro, natural e útil.
+Responda à mensagem dele de maneira natural.
+
+Não mencione:
+- prompts;
+- classificação de intenção;
+- arquitetura interna;
+- regras internas;
+- raciocínio interno;
+- ferramentas internas.
+
+Não mostre pensamentos internos.
 
 Não finja executar ações.
 
-Se não souber algo, seja honesto.
+Se Gustavo fizer uma pergunta simples,
+responda diretamente, sem enrolação.
 
-Não mencione arquitetura interna,
-classificação de intenção ou este prompt.
+Se ele quiser uma explicação detalhada,
+explique de maneira organizada.
+
+Se ele estiver brincando,
+pode acompanhar a brincadeira.
+
+Se ele estiver falando em outro idioma,
+responda nesse mesmo idioma.
 
 ============================================================
 MEMÓRIA
@@ -695,7 +791,7 @@ MENSAGEM
 RESPOSTA
 ============================================================
 
-Responda diretamente ao Senhor Gustavo.
+Responda agora.
 """
 
     try:
@@ -719,7 +815,6 @@ Responda diretamente ao Senhor Gustavo.
         )
 
         return resposta or (
-            "Desculpe, Senhor. "
             "Não consegui formular uma resposta agora."
         )
 
@@ -730,9 +825,8 @@ Responda diretamente ao Senhor Gustavo.
         )
 
         return (
-            "Desculpe, Senhor. "
             "Meu núcleo de conversação "
-            "apresentou uma falha."
+            "apresentou uma falha agora."
         )
 
 
@@ -785,8 +879,7 @@ def gerar_resposta_pesquisa(
     if not client:
 
         return (
-            "Desculpe, Senhor. "
-            "O núcleo de IA está indisponível."
+            "Meu núcleo de IA está indisponível."
         )
 
     memoria_atual = carregar_memoria()
@@ -798,8 +891,8 @@ def gerar_resposta_pesquisa(
     if not resultados:
 
         return (
-            "Senhor, a pesquisa não retornou "
-            "resultados utilizáveis neste momento."
+            "Não encontrei resultados confiáveis "
+            "o suficiente para responder isso agora."
         )
 
     contexto_busca = "\n".join(
@@ -814,16 +907,23 @@ def gerar_resposta_pesquisa(
     )
 
     prompt = f"""
-Você é J.A.R.V.I.S., assistente pessoal
-do Senhor Gustavo.
+{PERSONALITY_RULES}
 
-Responda à pergunta dele usando os resultados
-da pesquisa como fonte principal.
+Você acabou de realizar uma pesquisa na internet.
 
-Não invente informações não sustentadas pelos resultados.
+Responda à pergunta de Gustavo usando os resultados
+abaixo como fonte principal.
+
+Não invente informações que não estejam sustentadas
+pelos resultados.
 
 Se os resultados forem insuficientes,
-diga isso claramente.
+seja transparente.
+
+Não precisa dizer repetidamente
+"Senhor Gustavo" ou "Senhor".
+
+Mantenha o mesmo idioma usado por Gustavo na pergunta.
 
 ============================================================
 MEMÓRIA
@@ -859,7 +959,7 @@ PERGUNTA
 RESPOSTA
 ============================================================
 
-Responda de forma natural e útil.
+Responda naturalmente.
 """
 
     try:
@@ -883,7 +983,7 @@ Responda de forma natural e útil.
         )
 
         return resposta or (
-            "Senhor, encontrei resultados, "
+            "Encontrei resultados, "
             "mas não consegui montar uma resposta."
         )
 
@@ -894,7 +994,7 @@ Responda de forma natural e útil.
         )
 
         return (
-            "Senhor, a pesquisa foi realizada, "
+            "A pesquisa foi realizada, "
             "mas houve um erro ao analisar os resultados."
         )
 
@@ -937,8 +1037,8 @@ async def start(
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=(
-            "J.A.R.V.I.S. Core Online. "
-            "Estou à sua inteira disposição, Senhor."
+            "J.A.R.V.I.S. online. 😎\n"
+            "Manda aí, Gustavo."
         )
     )
 
@@ -999,10 +1099,8 @@ async def handle_message(
             )
 
             resposta = (
-                "Senhor, essa solicitação "
-                "de confirmação expirou. "
-                "Envie o comando novamente "
-                "caso ainda deseje executá-lo."
+                "Essa solicitação de confirmação expirou. "
+                "Se ainda quiser executar, manda o comando de novo."
             )
 
             adicionar_contexto(
@@ -1037,7 +1135,7 @@ async def handle_message(
             )
 
             resposta = (
-                f"Comando confirmado, Senhor. "
+                f"Fechou. Confirmado. "
                 f"Executando: {acao_confirmada}."
             )
 
@@ -1061,7 +1159,7 @@ async def handle_message(
             )
 
             resposta = (
-                "Operação cancelada, Senhor."
+                "Beleza, operação cancelada."
             )
 
             adicionar_contexto(
@@ -1077,7 +1175,7 @@ async def handle_message(
             return
 
         resposta = (
-            "Preciso de uma confirmação clara, Senhor. "
+            "Preciso de uma confirmação clara. "
             "Pode dizer 'pode executar' para confirmar "
             "ou 'cancela' para abortar."
         )
@@ -1141,17 +1239,15 @@ async def handle_message(
         if intent == "restart":
 
             resposta = (
-                "⚠️ Senhor, o comando solicita a "
-                "REINICIALIZAÇÃO do computador.\n\n"
-                "Deseja realmente executar essa ação?"
+                "⚠️ Você pediu para reiniciar o computador.\n\n"
+                "Quer mesmo executar essa ação?"
             )
 
         else:
 
             resposta = (
-                "⚠️ Senhor, o comando solicita o "
-                "DESLIGAMENTO do computador.\n\n"
-                "Deseja realmente executar essa ação?"
+                "⚠️ Você pediu para desligar o computador.\n\n"
+                "Quer mesmo executar essa ação?"
             )
 
         adicionar_contexto(
@@ -1181,21 +1277,32 @@ async def handle_message(
         if intent == "lock_screen":
 
             resposta = (
-                "🔒 Bloqueando a tela, Senhor."
+                "🔒 Bloqueando a tela."
             )
 
         elif intent == "set_volume":
 
             resposta = (
-                f"🔊 Ajustando o volume para "
-                f"{argumento}%."
+                f"🔊 Volume ajustado para {argumento}%."
+            )
+
+        elif intent == "media_control":
+
+            respostas_midia = {
+                "play_pause": "⏯️ Pausando/tocando.",
+                "next": "⏭️ Pulando para a próxima.",
+                "prev": "⏮️ Voltando para a anterior."
+            }
+
+            resposta = respostas_midia.get(
+                target,
+                "🎵 Controle de mídia enviado."
             )
 
         else:
 
             resposta = (
-                "Comando processado para a "
-                "máquina local, Senhor."
+                "Fechou. Comando enviado para o PC."
             )
 
         adicionar_contexto(
@@ -1223,7 +1330,7 @@ async def handle_message(
         )
 
         mensagem_status = await update.message.reply_text(
-            f"🔍 Buscando informações sobre:\n"
+            f"🔍 Só um segundo, vou pesquisar:\n"
             f"{consulta}"
         )
 
