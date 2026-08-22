@@ -138,6 +138,13 @@ Detecte automaticamente o idioma predominante usado por Gustavo.
 
 Responda no MESMO idioma da mensagem dele.
 
+Idiomas principais suportados:
+
+- Português
+- Inglês
+- Francês
+- Espanhol
+
 Exemplos:
 
 Português:
@@ -156,15 +163,475 @@ Espanhol:
 Gustavo: "¿Cuál es la capital de Francia?"
 J.A.R.V.I.S.: responde em espanhol.
 
-Se Gustavo misturar idiomas, responda no idioma predominante
-da mensagem.
+Se Gustavo misturar idiomas, identifique o idioma
+predominante da mensagem.
 
 Se ele mudar de idioma, acompanhe imediatamente.
 
 Não traduza a mensagem dele sem que ele peça.
 
 Essa regra também vale para pesquisas na internet.
+
+Quando uma resposta for uma confirmação, cancelamento
+ou resposta automática de uma ação, ela também deve
+acompanhar o idioma predominante da mensagem de Gustavo.
 """
+
+
+# ============================================================
+# DETECÇÃO DE IDIOMA
+# ============================================================
+
+def detectar_idioma(texto):
+
+    if not texto:
+        return "pt"
+
+    texto_normalizado = normalizar_texto(texto)
+
+    palavras = texto_normalizado.split()
+
+    pontuacoes = {
+        "pt": 0,
+        "en": 0,
+        "fr": 0,
+        "es": 0
+    }
+
+    # --------------------------------------------------------
+    # PORTUGUÊS
+    # --------------------------------------------------------
+
+    palavras_pt = {
+        "que", "qual", "como", "porque", "por", "para",
+        "voce", "você", "eu", "meu", "minha", "isso",
+        "esse", "essa", "onde", "quando", "tambem",
+        "também", "nao", "não", "sim", "abre", "feche",
+        "abrir", "fechar", "desliga", "desligar",
+        "reinicia", "reiniciar", "computador", "pc",
+        "musica", "música", "gosto", "acho", "cara",
+        "mano", "kkkk", "pode", "quero", "preciso"
+    }
+
+    # --------------------------------------------------------
+    # INGLÊS
+    # --------------------------------------------------------
+
+    palavras_en = {
+        "what", "which", "how", "why", "where", "when",
+        "who", "can", "could", "would", "should",
+        "the", "this", "that", "you", "your", "i",
+        "my", "me", "is", "are", "do", "does", "did",
+        "open", "close", "turn", "off", "restart",
+        "computer", "please", "want", "need",
+        "music", "think", "bro", "yeah", "nope",
+        "cancel"
+    }
+
+    # --------------------------------------------------------
+    # FRANCÊS
+    # --------------------------------------------------------
+
+    palavras_fr = {
+        "quelle", "quel", "quels", "quelles", "est",
+        "sont", "comment", "pourquoi", "où", "quand",
+        "qui", "peux", "peut", "tu", "vous", "je",
+        "mon", "ma", "mes", "ton", "ta", "tes",
+        "le", "la", "les", "un", "une", "des",
+        "dans", "avec", "pour", "mais", "oui", "non",
+        "ouvre", "ouvrir", "ferme", "fermer",
+        "éteins", "eteins", "ordinateur", "musique",
+        "merci", "français", "francais", "explique",
+        "laisse", "tomber", "annule", "annuler"
+    }
+
+    # --------------------------------------------------------
+    # ESPANHOL
+    # --------------------------------------------------------
+
+    palavras_es = {
+        "que", "cual", "cuál", "como", "cómo", "por",
+        "porque", "donde", "dónde", "cuando", "cuándo",
+        "quien", "quién", "yo", "tu", "tú", "usted",
+        "mi", "mis", "tu", "tus", "el", "la", "los",
+        "las", "un", "una", "para", "con", "pero",
+        "si", "sí", "no", "abre", "abrir", "cierra",
+        "cerrar", "apaga", "apagar", "reinicia",
+        "reiniciar", "computadora", "ordenador",
+        "musica", "música", "explica", "gracias",
+        "español", "espanol"
+    }
+
+    for palavra in palavras:
+
+        if palavra in palavras_pt:
+            pontuacoes["pt"] += 1
+
+        if palavra in palavras_en:
+            pontuacoes["en"] += 1
+
+        if palavra in palavras_fr:
+            pontuacoes["fr"] += 1
+
+        if palavra in palavras_es:
+            pontuacoes["es"] += 1
+
+    # --------------------------------------------------------
+    # MARCADORES FORTES
+    # --------------------------------------------------------
+
+    if any(
+        marcador in texto.lower()
+        for marcador in [
+            "quelle est",
+            "qu'est-ce",
+            "est-ce que",
+            "peux-tu",
+            "peux tu",
+            "pourquoi",
+            "comment",
+            "en français",
+            "en francais"
+        ]
+    ):
+        pontuacoes["fr"] += 4
+
+    if any(
+        marcador in texto.lower()
+        for marcador in [
+            "what is",
+            "what's",
+            "how does",
+            "how do",
+            "can you",
+            "in english"
+        ]
+    ):
+        pontuacoes["en"] += 4
+
+    if any(
+        marcador in texto.lower()
+        for marcador in [
+            "¿",
+            "¡",
+            "cuál es",
+            "como se",
+            "por qué",
+            "en español"
+        ]
+    ):
+        pontuacoes["es"] += 4
+
+    if any(
+        marcador in texto.lower()
+        for marcador in [
+            "qual é",
+            "qual e",
+            "como funciona",
+            "por que",
+            "me explica",
+            "em português",
+            "em portugues"
+        ]
+    ):
+        pontuacoes["pt"] += 4
+
+    idioma = max(
+        pontuacoes,
+        key=pontuacoes.get
+    )
+
+    # Português como fallback natural
+    if pontuacoes[idioma] == 0:
+        return "pt"
+
+    return idioma
+
+
+# ============================================================
+# RESPOSTAS AUTOMÁTICAS MULTILÍNGUES
+# ============================================================
+
+def resposta_confirmacao_pendente(
+    acao,
+    idioma
+):
+
+    if idioma == "fr":
+
+        if acao == "restart":
+            return (
+                "⚠️ Tu as demandé de redémarrer "
+                "l'ordinateur.\n\n"
+                "Tu veux vraiment exécuter cette action ?"
+            )
+
+        return (
+            "⚠️ Tu as demandé d'éteindre "
+            "l'ordinateur.\n\n"
+            "Tu veux vraiment exécuter cette action ?"
+        )
+
+    if idioma == "en":
+
+        if acao == "restart":
+            return (
+                "⚠️ You asked me to restart "
+                "the computer.\n\n"
+                "Do you really want to execute this action?"
+            )
+
+        return (
+            "⚠️ You asked me to shut down "
+            "the computer.\n\n"
+            "Do you really want to execute this action?"
+        )
+
+    if idioma == "es":
+
+        if acao == "restart":
+            return (
+                "⚠️ Pediste reiniciar "
+                "el ordenador.\n\n"
+                "¿Realmente quieres ejecutar esta acción?"
+            )
+
+        return (
+            "⚠️ Pediste apagar "
+            "el ordenador.\n\n"
+            "¿Realmente quieres ejecutar esta acción?"
+        )
+
+    if acao == "restart":
+        return (
+            "⚠️ Você pediu para reiniciar o computador.\n\n"
+            "Quer mesmo executar essa ação?"
+        )
+
+    return (
+        "⚠️ Você pediu para desligar o computador.\n\n"
+        "Quer mesmo executar essa ação?"
+    )
+
+
+def resposta_cancelamento(
+    idioma
+):
+
+    respostas = {
+
+        "pt": [
+            "Beleza, operação cancelada.",
+            "Fechou kkkkk, cancelei.",
+            "Tranquilo, não vou executar.",
+            "Tá cancelado. 😎"
+        ],
+
+        "en": [
+            "Alright, operation cancelled.",
+            "Got it, cancelled.",
+            "No worries, I won't execute it.",
+            "Cancelled. 😎"
+        ],
+
+        "fr": [
+            "D'accord, opération annulée.",
+            "Pas de souci, j'annule ça.",
+            "C'est bon, je ne vais pas l'exécuter.",
+            "Annulé. 😎"
+        ],
+
+        "es": [
+            "Vale, operación cancelada.",
+            "Entendido, lo cancelo.",
+            "Tranqui, no voy a ejecutarlo.",
+            "Cancelado. 😎"
+        ]
+    }
+
+    import random
+
+    return random.choice(
+        respostas.get(
+            idioma,
+            respostas["pt"]
+        )
+    )
+
+
+def resposta_confirmacao_sucesso(
+    acao,
+    idioma
+):
+
+    if idioma == "fr":
+
+        return (
+            f"C'est bon. Confirmation reçue. "
+            f"Exécution de : {acao}."
+        )
+
+    if idioma == "en":
+
+        return (
+            f"Alright. Confirmation received. "
+            f"Executing: {acao}."
+        )
+
+    if idioma == "es":
+
+        return (
+            f"Listo. Confirmación recibida. "
+            f"Ejecutando: {acao}."
+        )
+
+    return (
+        f"Fechou. Confirmado. "
+        f"Executando: {acao}."
+    )
+
+
+def resposta_confirmacao_invalida(
+    idioma
+):
+
+    if idioma == "fr":
+
+        return (
+            "J'ai besoin d'une confirmation claire. "
+            "Tu peux dire « oui, exécute » pour confirmer "
+            "ou « annule » pour arrêter."
+        )
+
+    if idioma == "en":
+
+        return (
+            "I need a clear confirmation. "
+            "You can say 'yes, execute' to confirm "
+            "or 'cancel' to stop."
+        )
+
+    if idioma == "es":
+
+        return (
+            "Necesito una confirmación clara. "
+            "Puedes decir «sí, ejecuta» para confirmar "
+            "o «cancela» para detenerlo."
+        )
+
+    return (
+        "Preciso de uma confirmação clara. "
+        "Pode dizer 'pode executar' para confirmar "
+        "ou 'cancela' para abortar."
+    )
+
+
+def resposta_acao_local(
+    intent,
+    target,
+    argumento,
+    idioma
+):
+
+    if idioma == "fr":
+
+        if intent == "lock_screen":
+            return "🔒 Verrouillage de l'écran."
+
+        if intent == "set_volume":
+            return (
+                f"🔊 Volume réglé à {argumento}%."
+            )
+
+        if intent == "media_control":
+
+            respostas = {
+                "play_pause": "⏯️ Lecture/pause.",
+                "next": "⏭️ Passage au morceau suivant.",
+                "prev": "⏮️ Retour au morceau précédent."
+            }
+
+            return respostas.get(
+                target,
+                "🎵 Commande multimédia envoyée."
+            )
+
+        return "C'est bon. Commande envoyée au PC."
+
+    if idioma == "en":
+
+        if intent == "lock_screen":
+            return "🔒 Locking the screen."
+
+        if intent == "set_volume":
+            return (
+                f"🔊 Volume set to {argumento}%."
+            )
+
+        if intent == "media_control":
+
+            respostas = {
+                "play_pause": "⏯️ Playing/pausing.",
+                "next": "⏭️ Skipping to the next track.",
+                "prev": "⏮️ Going back to the previous track."
+            }
+
+            return respostas.get(
+                target,
+                "🎵 Media command sent."
+            )
+
+        return "Done. Command sent to the PC."
+
+    if idioma == "es":
+
+        if intent == "lock_screen":
+            return "🔒 Bloqueando la pantalla."
+
+        if intent == "set_volume":
+            return (
+                f"🔊 Volumen ajustado al {argumento}%."
+            )
+
+        if intent == "media_control":
+
+            respostas = {
+                "play_pause": "⏯️ Reproduciendo/pausando.",
+                "next": "⏭️ Pasando a la siguiente.",
+                "prev": "⏮️ Volviendo a la anterior."
+            }
+
+            return respostas.get(
+                target,
+                "🎵 Comando multimedia enviado."
+            )
+
+        return "Listo. Comando enviado al PC."
+
+    # PORTUGUÊS
+
+    if intent == "lock_screen":
+        return "🔒 Bloqueando a tela."
+
+    if intent == "set_volume":
+        return (
+            f"🔊 Volume ajustado para {argumento}%."
+        )
+
+    if intent == "media_control":
+
+        respostas = {
+            "play_pause": "⏯️ Pausando/tocando.",
+            "next": "⏭️ Pulando para a próxima.",
+            "prev": "⏮️ Voltando para a anterior."
+        }
+
+        return respostas.get(
+            target,
+            "🎵 Controle de mídia enviado."
+        )
+
+    return "Fechou. Comando enviado para o PC."
 
 
 # ============================================================
@@ -178,7 +645,6 @@ def limpar_resposta_ia(texto):
 
     texto = str(texto)
 
-    # Remove raciocínio interno
     texto = re.sub(
         r"<think>.*?</think>",
         "",
@@ -186,7 +652,6 @@ def limpar_resposta_ia(texto):
         flags=re.DOTALL | re.IGNORECASE
     )
 
-    # Remove possíveis blocos de análise
     texto = re.sub(
         r"<analysis>.*?</analysis>",
         "",
@@ -194,7 +659,6 @@ def limpar_resposta_ia(texto):
         flags=re.DOTALL | re.IGNORECASE
     )
 
-    # Remove excesso de linhas
     texto = re.sub(
         r"\n{3,}",
         "\n\n",
@@ -410,7 +874,7 @@ def normalizar_texto(
 
 
 # ============================================================
-# CONFIRMAÇÃO INTELIGENTE
+# CONFIRMAÇÃO INTELIGENTE MULTILÍNGUE
 # ============================================================
 
 def resposta_e_confirmacao(
@@ -421,7 +885,13 @@ def resposta_e_confirmacao(
         texto
     )
 
+    # --------------------------------------------------------
+    # CANCELAMENTOS EXATOS
+    # --------------------------------------------------------
+
     cancelamentos_exatos = {
+
+        # Português
         "nao",
         "nao pode",
         "cancela",
@@ -436,15 +906,126 @@ def resposta_e_confirmacao(
         "abort",
         "aborta",
         "negativo",
+        "nem pensar",
+        "nem fodendo",
+        "nem ferrando",
+        "de jeito nenhum",
+        "de forma nenhuma",
+        "nem a pau",
+
+        # Inglês
+        "no",
+        "nope",
+        "nah",
+        "cancel",
+        "cancel it",
+        "never mind",
+        "forget it",
+        "dont do it",
+        "do not do it",
+        "hell no",
+        "no way",
+
+        # Francês
+        "non",
+        "annule",
+        "annuler",
+        "annule ca",
+        "laisse tomber",
+        "pas question",
+        "surtout pas",
+        "oublie",
+        "oublie ca",
+
+        # Espanhol
+        "no",
+        "cancela",
+        "cancelar",
+        "cancelalo",
+        "olvidalo",
+        "deja eso",
+        "ni de broma",
+        "ni loco",
+        "de ninguna manera"
     }
 
     if texto_normalizado in cancelamentos_exatos:
         return "cancelar"
 
-    if texto_normalizado.startswith("nao "):
+    # --------------------------------------------------------
+    # EXPRESSÕES DE CANCELAMENTO
+    # --------------------------------------------------------
+
+    padroes_cancelamento = [
+
+        # Português
+        r"\bnem fodendo\b",
+        r"\bnem ferrando\b",
+        r"\bnem pensar\b",
+        r"\bde jeito nenhum\b",
+        r"\bde forma nenhuma\b",
+        r"\bnem a pau\b",
+        r"\bcancela isso\b",
+        r"\bcancela ai\b",
+        r"\bcancela aí\b",
+        r"\bnao faz isso\b",
+        r"\bnão faz isso\b",
+        r"\bdeixa pra la\b",
+        r"\bdeixa pra lá\b",
+        r"\besquece isso\b",
+
+        # Inglês
+        r"\bhell no\b",
+        r"\bno way\b",
+        r"\bnever mind\b",
+        r"\bforget it\b",
+        r"\bcancel that\b",
+        r"\bdont do that\b",
+        r"\bdo not do that\b",
+
+        # Francês
+        r"\blaisse tomber\b",
+        r"\bpas question\b",
+        r"\bsurtout pas\b",
+        r"\boublie ca\b",
+        r"\bannule ca\b",
+        r"\bannule ça\b",
+
+        # Espanhol
+        r"\bni de broma\b",
+        r"\bni loco\b",
+        r"\bde ninguna manera\b",
+        r"\bcancela eso\b",
+        r"\bolvida eso\b"
+    ]
+
+    for padrao in padroes_cancelamento:
+
+        if re.search(
+            padrao,
+            texto_normalizado,
+            flags=re.IGNORECASE
+        ):
+            return "cancelar"
+
+    # --------------------------------------------------------
+    # COMEÇOS DE FRASES NEGATIVAS
+    # --------------------------------------------------------
+
+    if (
+        texto_normalizado.startswith("nao ")
+        or texto_normalizado.startswith("no ")
+        or texto_normalizado.startswith("non ")
+    ):
         return "cancelar"
 
+    # --------------------------------------------------------
+    # CONFIRMAÇÕES EXATAS
+    # --------------------------------------------------------
+
     confirmacoes_exatas = {
+
+        # Português
         "sim",
         "confirmo",
         "confirmado",
@@ -467,12 +1048,57 @@ def resposta_e_confirmacao(
         "faca",
         "pode prosseguir",
         "prossiga",
+
+        # Inglês
+        "yes",
+        "yeah",
+        "yep",
+        "confirm",
+        "confirmed",
+        "confirm it",
+        "go ahead",
+        "execute",
+        "do it",
+        "proceed",
+        "you can do it",
+        "yes please",
+
+        # Francês
+        "oui",
+        "confirme",
+        "confirmer",
+        "confirme ca",
+        "confirme ça",
+        "vas y",
+        "execute",
+        "exécute",
+        "fais le",
+        "fais ça",
+        "continue",
+
+        # Espanhol
+        "si",
+        "sí",
+        "confirmo",
+        "confirmar",
+        "confirma",
+        "hazlo",
+        "ejecuta",
+        "adelante",
+        "continua",
+        "procede"
     }
 
     if texto_normalizado in confirmacoes_exatas:
         return "confirmar"
 
+    # --------------------------------------------------------
+    # PADRÕES DE CONFIRMAÇÃO
+    # --------------------------------------------------------
+
     padroes_confirmacao = [
+
+        # Português
         r"^sim.*$",
         r"^pode .*execut",
         r"^pode .*fazer",
@@ -482,6 +1108,33 @@ def resposta_e_confirmacao(
         r"^esta autorizado.*",
         r"^manda .*ver.*",
         r"^pode prosseguir.*",
+
+        # Inglês
+        r"^yes.*$",
+        r"^yeah.*$",
+        r"^yep.*$",
+        r"^go ahead.*$",
+        r"^please execute.*$",
+        r"^execute.*$",
+        r"^do it.*$",
+        r"^proceed.*$",
+
+        # Francês
+        r"^oui.*$",
+        r"^vas y.*$",
+        r"^execute.*$",
+        r"^exécute.*$",
+        r"^fais.*$",
+        r"^continue.*$",
+
+        # Espanhol
+        r"^si.*$",
+        r"^sí.*$",
+        r"^adelante.*$",
+        r"^ejecuta.*$",
+        r"^hazlo.*$",
+        r"^continua.*$",
+        r"^procede.*$"
     ]
 
     for padrao in padroes_confirmacao:
@@ -890,9 +1543,32 @@ def gerar_resposta_pesquisa(
 
     if not resultados:
 
-        return (
-            "Não encontrei resultados confiáveis "
-            "o suficiente para responder isso agora."
+        idioma = detectar_idioma(
+            texto_usuario
+        )
+
+        mensagens = {
+
+            "pt":
+                "Não encontrei resultados confiáveis "
+                "o suficiente para responder isso agora.",
+
+            "en":
+                "I couldn't find enough reliable results "
+                "to answer that right now.",
+
+            "fr":
+                "Je n'ai pas trouvé suffisamment de résultats "
+                "fiables pour répondre à cette question.",
+
+            "es":
+                "No encontré suficientes resultados confiables "
+                "para responder a eso ahora."
+        }
+
+        return mensagens.get(
+            idioma,
+            mensagens["pt"]
         )
 
     contexto_busca = "\n".join(
@@ -1062,9 +1738,13 @@ async def handle_message(
 
     chat_id = update.effective_chat.id
 
+    idioma = detectar_idioma(
+        texto
+    )
+
     logger.info(
         f"Mensagem recebida do Telegram: "
-        f"{texto}"
+        f"{texto} | Idioma: {idioma}"
     )
 
     adicionar_contexto(
@@ -1098,9 +1778,28 @@ async def handle_message(
                 None
             )
 
-            resposta = (
-                "Essa solicitação de confirmação expirou. "
-                "Se ainda quiser executar, manda o comando de novo."
+            mensagens_expiracao = {
+
+                "pt":
+                    "Essa solicitação de confirmação expirou. "
+                    "Se ainda quiser executar, manda o comando de novo.",
+
+                "en":
+                    "This confirmation request expired. "
+                    "If you still want to execute it, send the command again.",
+
+                "fr":
+                    "Cette demande de confirmation a expiré. "
+                    "Si tu veux toujours l'exécuter, renvoie la commande.",
+
+                "es":
+                    "Esta solicitud de confirmación expiró. "
+                    "Si todavía quieres ejecutarla, envía el comando de nuevo."
+            }
+
+            resposta = mensagens_expiracao.get(
+                idioma,
+                mensagens_expiracao["pt"]
             )
 
             adicionar_contexto(
@@ -1119,6 +1818,10 @@ async def handle_message(
             texto
         )
 
+        # ----------------------------------------------------
+        # CONFIRMAR
+        # ----------------------------------------------------
+
         if decisao == "confirmar":
 
             acao_confirmada = pendente[
@@ -1134,9 +1837,9 @@ async def handle_message(
                 acao_confirmada
             )
 
-            resposta = (
-                f"Fechou. Confirmado. "
-                f"Executando: {acao_confirmada}."
+            resposta = resposta_confirmacao_sucesso(
+                acao_confirmada,
+                idioma
             )
 
             adicionar_contexto(
@@ -1150,6 +1853,10 @@ async def handle_message(
             )
 
             return
+
+        # ----------------------------------------------------
+        # CANCELAR
+        # ----------------------------------------------------
 
         if decisao == "cancelar":
 
@@ -1158,8 +1865,8 @@ async def handle_message(
                 None
             )
 
-            resposta = (
-                "Beleza, operação cancelada."
+            resposta = resposta_cancelamento(
+                idioma
             )
 
             adicionar_contexto(
@@ -1174,10 +1881,12 @@ async def handle_message(
 
             return
 
-        resposta = (
-            "Preciso de uma confirmação clara. "
-            "Pode dizer 'pode executar' para confirmar "
-            "ou 'cancela' para abortar."
+        # ----------------------------------------------------
+        # INDEFINIDO
+        # ----------------------------------------------------
+
+        resposta = resposta_confirmacao_invalida(
+            idioma
         )
 
         adicionar_contexto(
@@ -1236,19 +1945,10 @@ async def handle_message(
             "criado_em": time.time()
         }
 
-        if intent == "restart":
-
-            resposta = (
-                "⚠️ Você pediu para reiniciar o computador.\n\n"
-                "Quer mesmo executar essa ação?"
-            )
-
-        else:
-
-            resposta = (
-                "⚠️ Você pediu para desligar o computador.\n\n"
-                "Quer mesmo executar essa ação?"
-            )
+        resposta = resposta_confirmacao_pendente(
+            intent,
+            idioma
+        )
 
         adicionar_contexto(
             chat_id,
@@ -1274,36 +1974,12 @@ async def handle_message(
             argumento
         )
 
-        if intent == "lock_screen":
-
-            resposta = (
-                "🔒 Bloqueando a tela."
-            )
-
-        elif intent == "set_volume":
-
-            resposta = (
-                f"🔊 Volume ajustado para {argumento}%."
-            )
-
-        elif intent == "media_control":
-
-            respostas_midia = {
-                "play_pause": "⏯️ Pausando/tocando.",
-                "next": "⏭️ Pulando para a próxima.",
-                "prev": "⏮️ Voltando para a anterior."
-            }
-
-            resposta = respostas_midia.get(
-                target,
-                "🎵 Controle de mídia enviado."
-            )
-
-        else:
-
-            resposta = (
-                "Fechou. Comando enviado para o PC."
-            )
+        resposta = resposta_acao_local(
+            intent,
+            target,
+            argumento,
+            idioma
+        )
 
         adicionar_contexto(
             chat_id,
@@ -1329,9 +2005,26 @@ async def handle_message(
             else texto
         )
 
+        mensagens_busca = {
+
+            "pt":
+                f"🔍 Só um segundo, vou pesquisar:\n{consulta}",
+
+            "en":
+                f"🔍 One second, I'll search for:\n{consulta}",
+
+            "fr":
+                f"🔍 Une seconde, je vais chercher :\n{consulta}",
+
+            "es":
+                f"🔍 Un segundo, voy a buscar:\n{consulta}"
+        }
+
         mensagem_status = await update.message.reply_text(
-            f"🔍 Só um segundo, vou pesquisar:\n"
-            f"{consulta}"
+            mensagens_busca.get(
+                idioma,
+                mensagens_busca["pt"]
+            )
         )
 
         resultados = await asyncio.to_thread(
