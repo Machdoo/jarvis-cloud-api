@@ -5,6 +5,7 @@ import asyncio
 import time
 import re
 import unicodedata
+import random
 from datetime import datetime
 
 from fastapi import FastAPI
@@ -56,10 +57,13 @@ telegram_app = None
 
 fila_comandos = queue.Queue()
 
+# Guarda ações críticas aguardando confirmação
 pending_actions = {}
 
+# Contexto temporário de conversa
 user_context = {}
 
+# Reservado para logs/futuras expansões
 historico_logs = []
 
 CONFIRMATION_TIMEOUT = 300
@@ -88,6 +92,12 @@ ACTIONS_REQUIRING_CONFIRMATION = {
     "shutdown",
 }
 
+SUPPORTED_INTENTS = LOCAL_ACTIONS | CRITICAL_ACTIONS | {
+    "chat",
+    "web_search",
+    "unknown"
+}
+
 
 # ============================================================
 # PERSONALIDADE DO J.A.R.V.I.S.
@@ -111,8 +121,8 @@ Sua personalidade deve ser:
   "Estou à sua inteira disposição, Senhor."
   "Comando processado, Senhor."
   "Deseja que eu..."
-- Não force gírias. Em assuntos sérios, técnicos ou importantes,
-  priorize clareza e respeito.
+- Não force gírias.
+- Em assuntos sérios, técnicos ou importantes, priorize clareza.
 - Não seja infantil.
 - Não exagere em emojis.
 - Não elogie Gustavo sem motivo.
@@ -145,36 +155,15 @@ Idiomas principais suportados:
 - Francês
 - Espanhol
 
-Exemplos:
-
-Português:
-Gustavo: "Qual é a capital da França?"
-J.A.R.V.I.S.: responde em português.
-
-Francês:
-Gustavo: "Quelle est la capitale de la France ?"
-J.A.R.V.I.S.: responde em francês.
-
-Inglês:
-Gustavo: "What's the capital of France?"
-J.A.R.V.I.S.: responde em inglês.
-
-Espanhol:
-Gustavo: "¿Cuál es la capital de Francia?"
-J.A.R.V.I.S.: responde em espanhol.
-
-Se Gustavo misturar idiomas, identifique o idioma
-predominante da mensagem.
+Se Gustavo misturar idiomas, identifique o idioma predominante
+da mensagem e responda nele.
 
 Se ele mudar de idioma, acompanhe imediatamente.
 
 Não traduza a mensagem dele sem que ele peça.
 
-Essa regra também vale para pesquisas na internet.
-
-Quando uma resposta for uma confirmação, cancelamento
-ou resposta automática de uma ação, ela também deve
-acompanhar o idioma predominante da mensagem de Gustavo.
+Essa regra também vale para pesquisas na internet e mensagens
+automáticas de confirmação/cancelamento.
 """
 
 
@@ -188,7 +177,6 @@ def detectar_idioma(texto):
         return "pt"
 
     texto_normalizado = normalizar_texto(texto)
-
     palavras = texto_normalizado.split()
 
     pontuacoes = {
@@ -198,68 +186,47 @@ def detectar_idioma(texto):
         "es": 0
     }
 
-    # --------------------------------------------------------
-    # PORTUGUÊS
-    # --------------------------------------------------------
-
     palavras_pt = {
         "que", "qual", "como", "porque", "por", "para",
-        "voce", "você", "eu", "meu", "minha", "isso",
-        "esse", "essa", "onde", "quando", "tambem",
-        "também", "nao", "não", "sim", "abre", "feche",
-        "abrir", "fechar", "desliga", "desligar",
-        "reinicia", "reiniciar", "computador", "pc",
-        "musica", "música", "gosto", "acho", "cara",
-        "mano", "kkkk", "pode", "quero", "preciso"
+        "voce", "eu", "meu", "minha", "isso", "esse",
+        "essa", "onde", "quando", "tambem", "nao", "sim",
+        "abre", "feche", "abrir", "fechar", "desliga",
+        "desligar", "reinicia", "reiniciar", "computador",
+        "pc", "musica", "gosto", "acho", "cara", "mano",
+        "kkkk", "pode", "quero", "preciso"
     }
-
-    # --------------------------------------------------------
-    # INGLÊS
-    # --------------------------------------------------------
 
     palavras_en = {
         "what", "which", "how", "why", "where", "when",
-        "who", "can", "could", "would", "should",
-        "the", "this", "that", "you", "your", "i",
-        "my", "me", "is", "are", "do", "does", "did",
-        "open", "close", "turn", "off", "restart",
-        "computer", "please", "want", "need",
-        "music", "think", "bro", "yeah", "nope",
-        "cancel"
+        "who", "can", "could", "would", "should", "the",
+        "this", "that", "you", "your", "i", "my", "me",
+        "is", "are", "do", "does", "did", "open", "close",
+        "turn", "off", "restart", "computer", "please",
+        "want", "need", "music", "think", "bro", "yeah",
+        "nope", "cancel"
     }
-
-    # --------------------------------------------------------
-    # FRANCÊS
-    # --------------------------------------------------------
 
     palavras_fr = {
         "quelle", "quel", "quels", "quelles", "est",
-        "sont", "comment", "pourquoi", "où", "quand",
+        "sont", "comment", "pourquoi", "ou", "quand",
         "qui", "peux", "peut", "tu", "vous", "je",
-        "mon", "ma", "mes", "ton", "ta", "tes",
-        "le", "la", "les", "un", "une", "des",
-        "dans", "avec", "pour", "mais", "oui", "non",
-        "ouvre", "ouvrir", "ferme", "fermer",
-        "éteins", "eteins", "ordinateur", "musique",
-        "merci", "français", "francais", "explique",
+        "mon", "ma", "mes", "ton", "ta", "tes", "le",
+        "la", "les", "un", "une", "des", "dans", "avec",
+        "pour", "mais", "oui", "non", "ouvre", "ouvrir",
+        "ferme", "fermer", "eteins", "ordinateur",
+        "musique", "merci", "francais", "explique",
         "laisse", "tomber", "annule", "annuler"
     }
 
-    # --------------------------------------------------------
-    # ESPANHOL
-    # --------------------------------------------------------
-
     palavras_es = {
-        "que", "cual", "cuál", "como", "cómo", "por",
-        "porque", "donde", "dónde", "cuando", "cuándo",
-        "quien", "quién", "yo", "tu", "tú", "usted",
-        "mi", "mis", "tu", "tus", "el", "la", "los",
-        "las", "un", "una", "para", "con", "pero",
-        "si", "sí", "no", "abre", "abrir", "cierra",
-        "cerrar", "apaga", "apagar", "reinicia",
-        "reiniciar", "computadora", "ordenador",
-        "musica", "música", "explica", "gracias",
-        "español", "espanol"
+        "que", "cual", "como", "porque", "donde",
+        "cuando", "quien", "yo", "tu", "usted", "mi",
+        "mis", "tus", "el", "la", "los", "las", "un",
+        "una", "para", "con", "pero", "si", "no", "abre",
+        "abrir", "cierra", "cerrar", "apaga", "apagar",
+        "reinicia", "reiniciar", "computadora",
+        "ordenador", "musica", "explica", "gracias",
+        "espanol"
     }
 
     for palavra in palavras:
@@ -276,10 +243,7 @@ def detectar_idioma(texto):
         if palavra in palavras_es:
             pontuacoes["es"] += 1
 
-    # --------------------------------------------------------
-    # MARCADORES FORTES
-    # --------------------------------------------------------
-
+    # Marcadores fortes de francês
     if any(
         marcador in texto.lower()
         for marcador in [
@@ -289,13 +253,13 @@ def detectar_idioma(texto):
             "peux-tu",
             "peux tu",
             "pourquoi",
-            "comment",
             "en français",
             "en francais"
         ]
     ):
         pontuacoes["fr"] += 4
 
+    # Marcadores fortes de inglês
     if any(
         marcador in texto.lower()
         for marcador in [
@@ -309,6 +273,7 @@ def detectar_idioma(texto):
     ):
         pontuacoes["en"] += 4
 
+    # Marcadores fortes de espanhol
     if any(
         marcador in texto.lower()
         for marcador in [
@@ -322,6 +287,7 @@ def detectar_idioma(texto):
     ):
         pontuacoes["es"] += 4
 
+    # Marcadores fortes de português
     if any(
         marcador in texto.lower()
         for marcador in [
@@ -341,7 +307,6 @@ def detectar_idioma(texto):
         key=pontuacoes.get
     )
 
-    # Português como fallback natural
     if pontuacoes[idioma] == 0:
         return "pt"
 
@@ -414,9 +379,7 @@ def resposta_confirmacao_pendente(
     )
 
 
-def resposta_cancelamento(
-    idioma
-):
+def resposta_cancelamento(idioma):
 
     respostas = {
 
@@ -449,8 +412,6 @@ def resposta_cancelamento(
         ]
     }
 
-    import random
-
     return random.choice(
         respostas.get(
             idioma,
@@ -460,43 +421,42 @@ def resposta_cancelamento(
 
 
 def resposta_confirmacao_sucesso(
-    acao,
+    acoes,
     idioma
 ):
 
-    if idioma == "fr":
+    nomes = ", ".join(
+        acao.get("intent", "unknown")
+        for acao in acoes
+    )
 
+    if idioma == "fr":
         return (
             f"C'est bon. Confirmation reçue. "
-            f"Exécution de : {acao}."
+            f"Exécution : {nomes}."
         )
 
     if idioma == "en":
-
         return (
             f"Alright. Confirmation received. "
-            f"Executing: {acao}."
+            f"Executing: {nomes}."
         )
 
     if idioma == "es":
-
         return (
             f"Listo. Confirmación recibida. "
-            f"Ejecutando: {acao}."
+            f"Ejecutando: {nomes}."
         )
 
     return (
         f"Fechou. Confirmado. "
-        f"Executando: {acao}."
+        f"Executando: {nomes}."
     )
 
 
-def resposta_confirmacao_invalida(
-    idioma
-):
+def resposta_confirmacao_invalida(idioma):
 
     if idioma == "fr":
-
         return (
             "J'ai besoin d'une confirmation claire. "
             "Tu peux dire « oui, exécute » pour confirmer "
@@ -504,7 +464,6 @@ def resposta_confirmacao_invalida(
         )
 
     if idioma == "en":
-
         return (
             "I need a clear confirmation. "
             "You can say 'yes, execute' to confirm "
@@ -512,7 +471,6 @@ def resposta_confirmacao_invalida(
         )
 
     if idioma == "es":
-
         return (
             "Necesito una confirmación clara. "
             "Puedes decir «sí, ejecuta» para confirmar "
@@ -539,9 +497,7 @@ def resposta_acao_local(
             return "🔒 Verrouillage de l'écran."
 
         if intent == "set_volume":
-            return (
-                f"🔊 Volume réglé à {argumento}%."
-            )
+            return f"🔊 Volume réglé à {argumento}%."
 
         if intent == "media_control":
 
@@ -564,9 +520,7 @@ def resposta_acao_local(
             return "🔒 Locking the screen."
 
         if intent == "set_volume":
-            return (
-                f"🔊 Volume set to {argumento}%."
-            )
+            return f"🔊 Volume set to {argumento}%."
 
         if intent == "media_control":
 
@@ -589,9 +543,7 @@ def resposta_acao_local(
             return "🔒 Bloqueando la pantalla."
 
         if intent == "set_volume":
-            return (
-                f"🔊 Volumen ajustado al {argumento}%."
-            )
+            return f"🔊 Volumen ajustado al {argumento}%."
 
         if intent == "media_control":
 
@@ -608,15 +560,11 @@ def resposta_acao_local(
 
         return "Listo. Comando enviado al PC."
 
-    # PORTUGUÊS
-
     if intent == "lock_screen":
         return "🔒 Bloqueando a tela."
 
     if intent == "set_volume":
-        return (
-            f"🔊 Volume ajustado para {argumento}%."
-        )
+        return f"🔊 Volume ajustado para {argumento}%."
 
     if intent == "media_control":
 
@@ -885,10 +833,6 @@ def resposta_e_confirmacao(
         texto
     )
 
-    # --------------------------------------------------------
-    # CANCELAMENTOS EXATOS
-    # --------------------------------------------------------
-
     cancelamentos_exatos = {
 
         # Português
@@ -952,13 +896,7 @@ def resposta_e_confirmacao(
     if texto_normalizado in cancelamentos_exatos:
         return "cancelar"
 
-    # --------------------------------------------------------
-    # EXPRESSÕES DE CANCELAMENTO
-    # --------------------------------------------------------
-
     padroes_cancelamento = [
-
-        # Português
         r"\bnem fodendo\b",
         r"\bnem ferrando\b",
         r"\bnem pensar\b",
@@ -967,14 +905,10 @@ def resposta_e_confirmacao(
         r"\bnem a pau\b",
         r"\bcancela isso\b",
         r"\bcancela ai\b",
-        r"\bcancela aí\b",
         r"\bnao faz isso\b",
-        r"\bnão faz isso\b",
         r"\bdeixa pra la\b",
-        r"\bdeixa pra lá\b",
         r"\besquece isso\b",
 
-        # Inglês
         r"\bhell no\b",
         r"\bno way\b",
         r"\bnever mind\b",
@@ -983,15 +917,12 @@ def resposta_e_confirmacao(
         r"\bdont do that\b",
         r"\bdo not do that\b",
 
-        # Francês
         r"\blaisse tomber\b",
         r"\bpas question\b",
         r"\bsurtout pas\b",
         r"\boublie ca\b",
         r"\bannule ca\b",
-        r"\bannule ça\b",
 
-        # Espanhol
         r"\bni de broma\b",
         r"\bni loco\b",
         r"\bde ninguna manera\b",
@@ -1008,20 +939,13 @@ def resposta_e_confirmacao(
         ):
             return "cancelar"
 
-    # --------------------------------------------------------
-    # COMEÇOS DE FRASES NEGATIVAS
-    # --------------------------------------------------------
-
+    # Evita que "no..." ou "não..." passe como confirmação
     if (
         texto_normalizado.startswith("nao ")
         or texto_normalizado.startswith("no ")
         or texto_normalizado.startswith("non ")
     ):
         return "cancelar"
-
-    # --------------------------------------------------------
-    # CONFIRMAÇÕES EXATAS
-    # --------------------------------------------------------
 
     confirmacoes_exatas = {
 
@@ -1068,17 +992,15 @@ def resposta_e_confirmacao(
         "confirme",
         "confirmer",
         "confirme ca",
-        "confirme ça",
         "vas y",
         "execute",
         "exécute",
         "fais le",
-        "fais ça",
+        "fais ca",
         "continue",
 
         # Espanhol
         "si",
-        "sí",
         "confirmo",
         "confirmar",
         "confirma",
@@ -1092,13 +1014,7 @@ def resposta_e_confirmacao(
     if texto_normalizado in confirmacoes_exatas:
         return "confirmar"
 
-    # --------------------------------------------------------
-    # PADRÕES DE CONFIRMAÇÃO
-    # --------------------------------------------------------
-
     padroes_confirmacao = [
-
-        # Português
         r"^sim.*$",
         r"^pode .*execut",
         r"^pode .*fazer",
@@ -1109,7 +1025,6 @@ def resposta_e_confirmacao(
         r"^manda .*ver.*",
         r"^pode prosseguir.*",
 
-        # Inglês
         r"^yes.*$",
         r"^yeah.*$",
         r"^yep.*$",
@@ -1119,17 +1034,13 @@ def resposta_e_confirmacao(
         r"^do it.*$",
         r"^proceed.*$",
 
-        # Francês
         r"^oui.*$",
         r"^vas y.*$",
-        r"^execute.*$",
         r"^exécute.*$",
         r"^fais.*$",
         r"^continue.*$",
 
-        # Espanhol
         r"^si.*$",
-        r"^sí.*$",
         r"^adelante.*$",
         r"^ejecuta.*$",
         r"^hazlo.*$",
@@ -1149,7 +1060,84 @@ def resposta_e_confirmacao(
 
 
 # ============================================================
-# ANÁLISE DE INTENÇÃO
+# NORMALIZAR AÇÕES RETORNADAS PELA IA
+# ============================================================
+
+def normalizar_acoes_resultado(
+    resultado
+):
+    """
+    Converte a resposta do modelo para o formato novo:
+
+    {
+        "actions": [
+            {
+                "intent": "...",
+                "target": "...",
+                "argumento": "..."
+            }
+        ]
+    }
+
+    Também mantém compatibilidade com o formato antigo,
+    caso o modelo eventualmente devolva "intent"/"target"/"argumento".
+    """
+
+    acoes = resultado.get("actions")
+
+    if isinstance(acoes, dict):
+        acoes = [acoes]
+
+    if not isinstance(acoes, list):
+
+        intent_antiga = resultado.get(
+            "intent"
+        )
+
+        if intent_antiga:
+            acoes = [
+                {
+                    "intent": intent_antiga,
+                    "target": resultado.get("target"),
+                    "argumento": resultado.get("argumento")
+                }
+            ]
+
+        else:
+            acoes = []
+
+    acoes_validas = []
+
+    for acao in acoes:
+
+        if not isinstance(acao, dict):
+            continue
+
+        intent = acao.get("intent")
+
+        if not intent:
+            continue
+
+        intent = str(
+            intent
+        ).strip().lower()
+
+        if intent not in SUPPORTED_INTENTS:
+            continue
+
+        acoes_validas.append(
+            {
+                "intent": intent,
+                "target": acao.get("target"),
+                "argumento": acao.get("argumento")
+            }
+        )
+
+    return acoes_validas
+
+
+# ============================================================
+# ANÁLISE DE INTENÇÃO — SUPORTE A MÚLTIPLAS AÇÕES
 # ============================================================
 
 def analisar_intencao(
@@ -1160,10 +1148,7 @@ def analisar_intencao(
     if not client:
 
         return {
-            "intent": "unknown",
-            "target": None,
-            "argumento": None,
-            "risk": "verde",
+            "actions": [],
             "new_fact": None
         }
 
@@ -1176,16 +1161,24 @@ def analisar_intencao(
     prompt = f"""
 {PERSONALITY_RULES}
 
-Sua função nesta etapa é identificar o que Gustavo deseja fazer.
+Sua função é entender o que Gustavo quer fazer.
 
-Não trate toda mensagem como comando.
+Uma única mensagem pode conter UMA ou VÁRIAS ações.
 
-Ele pode:
-- conversar;
-- fazer perguntas;
-- pedir explicações;
-- pedir pesquisas;
-- executar ações no computador.
+Exemplo:
+
+"Abre o ChatGPT e o Spotify."
+
+deve produzir duas ações.
+
+Outro exemplo:
+
+"Abre o YouTube e coloca o volume em 30."
+
+deve produzir duas ações.
+
+IMPORTANTE:
+PRESERVE A ORDEM em que Gustavo pediu as ações.
 
 ============================================================
 MEMÓRIA
@@ -1200,7 +1193,7 @@ CONTEXTO
 {contexto}
 
 ============================================================
-INTENÇÕES
+INTENÇÕES DISPONÍVEIS
 ============================================================
 
 open_app
@@ -1240,62 +1233,76 @@ unknown
 REGRAS
 ============================================================
 
-1. Pergunta geral ou conversa:
-chat.
+1. Uma mensagem pode conter múltiplas ações.
 
-2. Informação atual, preço, notícia,
-evento ou informação mutável:
-web_search.
+2. Retorne TODAS as ações detectadas no campo "actions".
 
-3. Pedido explícito de pesquisa:
-web_search.
+3. Preserve a ordem das ações.
 
-4. restart e shutdown:
-risk = vermelho.
+4. Perguntas gerais ou conversa:
+use "chat".
 
-5. lock_screen:
-risk = verde.
+5. Informação atual, preço, notícia, evento ou informação
+mutável:
+use "web_search".
 
-6. set_volume:
+6. Pedido explícito de pesquisa:
+use "web_search".
+
+7. restart e shutdown são ações críticas.
+
+8. lock_screen não precisa de confirmação.
+
+9. set_volume:
 argumento de 0 a 100.
 
-7. media_control:
+10. media_control:
 target = play_pause, next ou prev.
 
-8. open_app:
-target identifica app/site.
+11. open_app:
+target identifica o app/site.
 
-9. open_and_search:
+12. open_and_search:
 target = plataforma.
-argumento = termo de pesquisa.
+argumento = termo pesquisado.
 
-10. Para chat:
-argumento pode ser null.
+13. Se Gustavo pedir várias ações locais,
+retorne uma ação para cada uma.
 
-11. Para web_search:
-argumento = consulta.
+14. Não combine várias ações dentro de um único objeto.
 
-12. Salve apenas fatos realmente úteis
-e relativamente permanentes.
+15. Para uma conversa normal:
+retorne apenas uma ação "chat".
 
-13. Não invente intenções.
+16. Para uma pesquisa:
+retorne apenas uma ação "web_search",
+a menos que Gustavo também tenha pedido explicitamente
+outras ações separadas.
+
+17. Se houver restart/shutdown junto com outras ações:
+retorne todas elas normalmente.
+O sistema externo cuidará da confirmação da ação crítica.
+
+18. Só salve fatos úteis e relativamente permanentes.
 
 ============================================================
-FORMATO JSON
+FORMATO JSON OBRIGATÓRIO
 ============================================================
 
 {{
-    "intent": "open_app" | "open_and_search" |
-               "send_whatsapp" | "media_control" |
-               "set_volume" | "restart" |
-               "shutdown" | "lock_screen" |
-               "chat" | "web_search" | "unknown",
+    "actions": [
+        {{
+            "intent": "open_app" | "open_and_search" |
+                       "send_whatsapp" | "media_control" |
+                       "set_volume" | "restart" |
+                       "shutdown" | "lock_screen" |
+                       "chat" | "web_search" | "unknown",
 
-    "target": "valor ou null",
+            "target": "valor ou null",
 
-    "argumento": "valor ou null",
-
-    "risk": "verde" | "vermelho",
+            "argumento": "valor ou null"
+        }}
+    ],
 
     "new_fact": {{
         "categoria": "Preferência|Contato|Rotina|Projeto|Emocional|Outros",
@@ -1303,7 +1310,7 @@ FORMATO JSON
     }}
 }}
 
-Se não houver novo fato:
+Se não houver fato novo:
 
 "new_fact": null
 
@@ -1352,7 +1359,14 @@ MENSAGEM ATUAL
                 novo_fato.get("informacao")
             )
 
-        return resultado
+        acoes = normalizar_acoes_resultado(
+            resultado
+        )
+
+        return {
+            "actions": acoes,
+            "new_fact": novo_fato
+        }
 
     except Exception as e:
 
@@ -1361,10 +1375,7 @@ MENSAGEM ATUAL
         )
 
         return {
-            "intent": "unknown",
-            "target": None,
-            "argumento": None,
-            "risk": "verde",
+            "actions": [],
             "new_fact": None
         }
 
@@ -1824,8 +1835,8 @@ async def handle_message(
 
         if decisao == "confirmar":
 
-            acao_confirmada = pendente[
-                "acao"
+            acoes_confirmadas = pendente[
+                "acoes"
             ]
 
             pending_actions.pop(
@@ -1833,12 +1844,16 @@ async def handle_message(
                 None
             )
 
-            enviar_para_agente(
-                acao_confirmada
-            )
+            for acao in acoes_confirmadas:
+
+                enviar_para_agente(
+                    acao["intent"],
+                    acao.get("target"),
+                    acao.get("argumento")
+                )
 
             resposta = resposta_confirmacao_sucesso(
-                acao_confirmada,
+                acoes_confirmadas,
                 idioma
             )
 
@@ -1911,132 +1926,20 @@ async def handle_message(
         chat_id
     )
 
-    intent = analise.get(
-        "intent"
+    acoes = analise.get(
+        "actions",
+        []
     )
-
-    target = analise.get(
-        "target"
-    )
-
-    argumento = analise.get(
-        "argumento"
-    )
-
-    if intent:
-        intent = str(
-            intent
-        ).strip().lower()
 
     logger.info(
-        f"Intenção identificada: "
-        f"{intent} | Alvo: {target} | "
-        f"Argumento: {argumento}"
+        f"Ações identificadas: {acoes}"
     )
 
-    # ========================================================
-    # AÇÕES CRÍTICAS
-    # ========================================================
-
-    if intent in ACTIONS_REQUIRING_CONFIRMATION:
-
-        pending_actions[chat_id] = {
-            "acao": intent,
-            "criado_em": time.time()
-        }
-
-        resposta = resposta_confirmacao_pendente(
-            intent,
-            idioma
-        )
-
-        adicionar_contexto(
-            chat_id,
-            "assistant",
-            resposta
-        )
-
-        await update.message.reply_text(
-            resposta
-        )
-
-        return
-
-    # ========================================================
-    # AÇÕES LOCAIS
-    # ========================================================
-
-    if intent in LOCAL_ACTIONS:
-
-        enviar_para_agente(
-            intent,
-            target,
-            argumento
-        )
-
-        resposta = resposta_acao_local(
-            intent,
-            target,
-            argumento,
-            idioma
-        )
-
-        adicionar_contexto(
-            chat_id,
-            "assistant",
-            resposta
-        )
-
-        await update.message.reply_text(
-            resposta
-        )
-
-        return
-
-    # ========================================================
-    # PESQUISA WEB
-    # ========================================================
-
-    if intent == "web_search":
-
-        consulta = (
-            str(argumento).strip()
-            if argumento
-            else texto
-        )
-
-        mensagens_busca = {
-
-            "pt":
-                f"🔍 Só um segundo, vou pesquisar:\n{consulta}",
-
-            "en":
-                f"🔍 One second, I'll search for:\n{consulta}",
-
-            "fr":
-                f"🔍 Une seconde, je vais chercher :\n{consulta}",
-
-            "es":
-                f"🔍 Un segundo, voy a buscar:\n{consulta}"
-        }
-
-        mensagem_status = await update.message.reply_text(
-            mensagens_busca.get(
-                idioma,
-                mensagens_busca["pt"]
-            )
-        )
-
-        resultados = await asyncio.to_thread(
-            pesquisar_web,
-            consulta
-        )
+    if not acoes:
 
         resposta = await asyncio.to_thread(
-            gerar_resposta_pesquisa,
+            gerar_resposta_chat,
             texto,
-            consulta,
-            resultados,
             chat_id
         )
 
@@ -2046,25 +1949,20 @@ async def handle_message(
             resposta
         )
 
-        try:
-
-            await mensagem_status.edit_text(
-                resposta
-            )
-
-        except Exception:
-
-            await update.message.reply_text(
-                resposta
-            )
+        await update.message.reply_text(
+            resposta
+        )
 
         return
 
-    # ========================================================
-    # CONVERSA
-    # ========================================================
+    # Remove unknown em conjunto com ações válidas
+    acoes = [
+        acao
+        for acao in acoes
+        if acao.get("intent") != "unknown"
+    ]
 
-    if intent == "chat":
+    if not acoes:
 
         resposta = await asyncio.to_thread(
             gerar_resposta_chat,
@@ -2085,7 +1983,262 @@ async def handle_message(
         return
 
     # ========================================================
-    # UNKNOWN
+    # CONVERSA NORMAL
+    # ========================================================
+    #
+    # Chat é tratado sozinho. Se vier misturado com ações
+    # operacionais, usamos o comportamento mais seguro:
+    # executamos as ações operacionais e ignoramos o chat
+    # como ação, pois a própria resposta pode ser gerada
+    # separadamente no futuro.
+    # ========================================================
+
+    acoes_chat = [
+        acao
+        for acao in acoes
+        if acao.get("intent") == "chat"
+    ]
+
+    acoes_operacionais = [
+        acao
+        for acao in acoes
+        if acao.get("intent") != "chat"
+    ]
+
+    if acoes_chat and not acoes_operacionais:
+
+        resposta = await asyncio.to_thread(
+            gerar_resposta_chat,
+            texto,
+            chat_id
+        )
+
+        adicionar_contexto(
+            chat_id,
+            "assistant",
+            resposta
+        )
+
+        await update.message.reply_text(
+            resposta
+        )
+
+        return
+
+    # ========================================================
+    # SEPARAR AÇÕES CRÍTICAS
+    # ========================================================
+
+    acoes_criticas = [
+        acao
+        for acao in acoes_operacionais
+        if acao.get("intent")
+        in ACTIONS_REQUIRING_CONFIRMATION
+    ]
+
+    acoes_nao_criticas = [
+        acao
+        for acao in acoes_operacionais
+        if acao.get("intent")
+        not in ACTIONS_REQUIRING_CONFIRMATION
+    ]
+
+    # ========================================================
+    # MAIS DE UMA AÇÃO CRÍTICA
+    # ========================================================
+    #
+    # Evitamos combinações perigosas como:
+    # "reinicia e desliga o PC".
+    # ========================================================
+
+    if len(acoes_criticas) > 1:
+
+        if idioma == "fr":
+            resposta = (
+                "⚠️ J'ai détecté plusieurs actions critiques "
+                "dans la même commande. Choisis une seule "
+                "action critique à exécuter."
+            )
+
+        elif idioma == "en":
+            resposta = (
+                "⚠️ I detected multiple critical actions "
+                "in the same command. Choose one critical "
+                "action to execute."
+            )
+
+        elif idioma == "es":
+            resposta = (
+                "⚠️ Detecté varias acciones críticas "
+                "en el mismo comando. Elige una sola "
+                "acción crítica para ejecutar."
+            )
+
+        else:
+            resposta = (
+                "⚠️ Detectei mais de uma ação crítica "
+                "na mesma mensagem. Escolha uma única "
+                "ação crítica para executar."
+            )
+
+        adicionar_contexto(
+            chat_id,
+            "assistant",
+            resposta
+        )
+
+        await update.message.reply_text(
+            resposta
+        )
+
+        return
+
+    # ========================================================
+    # EXECUTAR AÇÕES NÃO CRÍTICAS
+    # ========================================================
+
+    respostas_acoes = []
+
+    for acao in acoes_nao_criticas:
+
+        intent = acao.get(
+            "intent"
+        )
+
+        target = acao.get(
+            "target"
+        )
+
+        argumento = acao.get(
+            "argumento"
+        )
+
+        # ----------------------------------------------------
+        # AÇÃO LOCAL
+        # ----------------------------------------------------
+
+        if intent in LOCAL_ACTIONS:
+
+            enviar_para_agente(
+                intent,
+                target,
+                argumento
+            )
+
+            respostas_acoes.append(
+                resposta_acao_local(
+                    intent,
+                    target,
+                    argumento,
+                    idioma
+                )
+            )
+
+        # ----------------------------------------------------
+        # PESQUISA WEB
+        # ----------------------------------------------------
+
+        elif intent == "web_search":
+
+            consulta = (
+                str(argumento).strip()
+                if argumento
+                else texto
+            )
+
+            mensagens_busca = {
+
+                "pt":
+                    f"🔍 Pesquisando:\n{consulta}",
+
+                "en":
+                    f"🔍 Searching:\n{consulta}",
+
+                "fr":
+                    f"🔍 Recherche en cours :\n{consulta}",
+
+                "es":
+                    f"🔍 Buscando:\n{consulta}"
+            }
+
+            await update.message.reply_text(
+                mensagens_busca.get(
+                    idioma,
+                    mensagens_busca["pt"]
+                )
+            )
+
+            resultados = await asyncio.to_thread(
+                pesquisar_web,
+                consulta
+            )
+
+            resposta = await asyncio.to_thread(
+                gerar_resposta_pesquisa,
+                texto,
+                consulta,
+                resultados,
+                chat_id
+            )
+
+            respostas_acoes.append(
+                resposta
+            )
+
+    # ========================================================
+    # PEDIR CONFIRMAÇÃO PARA AÇÃO CRÍTICA
+    # ========================================================
+
+    if acoes_criticas:
+
+        acao_critica = acoes_criticas[0]
+
+        pending_actions[chat_id] = {
+            "acoes": [acao_critica],
+            "criado_em": time.time()
+        }
+
+        resposta = resposta_confirmacao_pendente(
+            acao_critica["intent"],
+            idioma
+        )
+
+        adicionar_contexto(
+            chat_id,
+            "assistant",
+            resposta
+        )
+
+        await update.message.reply_text(
+            resposta
+        )
+
+        return
+
+    # ========================================================
+    # RESPOSTA FINAL DAS AÇÕES NÃO CRÍTICAS
+    # ========================================================
+
+    if respostas_acoes:
+
+        resposta = "\n".join(
+            respostas_acoes
+        )
+
+        adicionar_contexto(
+            chat_id,
+            "assistant",
+            resposta
+        )
+
+        await update.message.reply_text(
+            resposta
+        )
+
+        return
+
+    # ========================================================
+    # FALLBACK
     # ========================================================
 
     resposta = await asyncio.to_thread(
