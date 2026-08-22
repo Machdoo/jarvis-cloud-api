@@ -3,3 +3,4 @@ uvicorn
 python-telegram-bot
 groq
 gspread
+duckduckgo-search
