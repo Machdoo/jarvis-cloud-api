@@ -44,7 +44,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
-
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 
@@ -58,36 +57,21 @@ telegram_app = None
 # Fila utilizada pelo agente local do PC
 fila_comandos = queue.Queue()
 
-# Ações que aguardam confirmação
+# Ações aguardando confirmação
 pending_actions = {}
 
-# Contexto de conversa temporário por usuário
+# Contexto temporário de conversa
 user_context = {}
 
-# Histórico geral reservado para futuras expansões/logs
+# Reservado para logs e futuras expansões
 historico_logs = []
 
-
-# Tempo máximo que uma confirmação fica pendente
-CONFIRMATION_TIMEOUT = 300  # 5 minutos
+# Tempo máximo para uma confirmação pendente
+CONFIRMATION_TIMEOUT = 300
 
 
 # ============================================================
-# DEFINIÇÃO CENTRAL DAS AÇÕES LOCAIS
-# ============================================================
-#
-# Esta estrutura facilita a futura criação de Skills.
-#
-# Exemplos futuros:
-# - BrowserSkill
-# - MusicSkill
-# - SystemSkill
-# - PhoneSkill
-# - GlassesSkill
-# - VisionSkill
-#
-# O agente atual continua recebendo apenas as ações que já
-# conhece.
+# AÇÕES
 # ============================================================
 
 LOCAL_ACTIONS = {
@@ -111,6 +95,52 @@ ACTIONS_REQUIRING_CONFIRMATION = {
 
 
 # ============================================================
+# LIMPEZA DAS RESPOSTAS DA IA
+# ============================================================
+
+def limpar_resposta_ia(texto):
+    """
+    Remove blocos de raciocínio interno do modelo, como:
+
+    <think>
+    ...
+    </think>
+
+    O usuário recebe apenas a resposta final.
+    """
+
+    if not texto:
+        return ""
+
+    texto = str(texto)
+
+    # Remove blocos <think>...</think>
+    texto = re.sub(
+        r"<think>.*?</think>",
+        "",
+        texto,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+
+    # Remove possíveis marcadores alternativos de raciocínio
+    texto = re.sub(
+        r"<analysis>.*?</analysis>",
+        "",
+        texto,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+
+    # Remove espaços excessivos
+    texto = re.sub(
+        r"\n{3,}",
+        "\n\n",
+        texto
+    )
+
+    return texto.strip()
+
+
+# ============================================================
 # GOOGLE SHEETS — MEMÓRIA PERMANENTE
 # ============================================================
 
@@ -118,7 +148,9 @@ planilha_memoria = None
 
 if GOOGLE_CREDENTIALS:
     try:
-        creds_dict = json.loads(GOOGLE_CREDENTIALS)
+        creds_dict = json.loads(
+            GOOGLE_CREDENTIALS
+        )
 
         gc = gspread.service_account_from_dict(
             creds_dict
@@ -140,9 +172,6 @@ if GOOGLE_CREDENTIALS:
 
 
 def carregar_memoria():
-    """
-    Carrega a memória permanente do usuário.
-    """
 
     if not planilha_memoria:
         return "Nenhuma memória conectada."
@@ -184,9 +213,6 @@ def carregar_memoria():
 
 
 def salvar_memoria(categoria, informacao):
-    """
-    Salva uma nova informação importante na memória permanente.
-    """
 
     if not planilha_memoria:
         return
@@ -222,9 +248,6 @@ def salvar_memoria(categoria, informacao):
 # ============================================================
 
 def obter_contexto_conversa(chat_id):
-    """
-    Retorna as últimas mensagens da conversa.
-    """
 
     historico = user_context.get(
         chat_id,
@@ -241,11 +264,11 @@ def obter_contexto_conversa(chat_id):
         papel = item.get("role")
         conteudo = item.get("content")
 
-        if papel == "user":
-            nome = "Gustavo"
-
-        else:
-            nome = "J.A.R.V.I.S."
+        nome = (
+            "Gustavo"
+            if papel == "user"
+            else "J.A.R.V.I.S."
+        )
 
         linhas.append(
             f"{nome}: {conteudo}"
@@ -259,9 +282,6 @@ def adicionar_contexto(
     role,
     content
 ):
-    """
-    Adiciona uma mensagem ao contexto temporário.
-    """
 
     if chat_id not in user_context:
         user_context[chat_id] = []
@@ -273,7 +293,7 @@ def adicionar_contexto(
         }
     )
 
-    # Mantém apenas uma janela recente
+    # Mantém apenas contexto recente
     user_context[chat_id] = (
         user_context[chat_id][-20:]
     )
@@ -284,9 +304,6 @@ def adicionar_contexto(
 # ============================================================
 
 def normalizar_texto(texto):
-    """
-    Remove acentos, pontuação desnecessária e normaliza espaços.
-    """
 
     texto = texto.lower().strip()
 
@@ -321,14 +338,10 @@ def normalizar_texto(texto):
 # ============================================================
 
 def resposta_e_confirmacao(texto):
-    """
-    Decide deterministicamente se a resposta é confirmação,
-    cancelamento ou ambígua.
 
-    Não usa IA para confirmar ações críticas.
-    """
-
-    texto_normalizado = normalizar_texto(texto)
+    texto_normalizado = normalizar_texto(
+        texto
+    )
 
     # --------------------------------------------------------
     # CANCELAMENTOS
@@ -354,7 +367,6 @@ def resposta_e_confirmacao(texto):
     if texto_normalizado in cancelamentos_exatos:
         return "cancelar"
 
-    # Frases claramente negativas
     if (
         texto_normalizado.startswith("nao ")
         or texto_normalizado.startswith("nao,")
@@ -393,7 +405,6 @@ def resposta_e_confirmacao(texto):
     if texto_normalizado in confirmacoes_exatas:
         return "confirmar"
 
-    # Algumas variações naturais
     padroes_confirmacao = [
         r"^sim.*$",
         r"^pode .*execut",
@@ -418,12 +429,12 @@ def resposta_e_confirmacao(texto):
 
 
 # ============================================================
-# IA — ANÁLISE DE INTENÇÃO
+# ANÁLISE DE INTENÇÃO — GROQ
 # ============================================================
 
 def analisar_intencao(
-    texto_usuario: str,
-    chat_id: int
+    texto_usuario,
+    chat_id
 ):
 
     if not client:
@@ -459,13 +470,13 @@ MEMÓRIA PERMANENTE
 {memoria_atual}
 
 ============================================================
-CONTEXTO RECENTE DA CONVERSA
+CONTEXTO RECENTE
 ============================================================
 
 {contexto}
 
 ============================================================
-INTENÇÕES DISPONÍVEIS
+INTENÇÕES
 ============================================================
 
 open_app
@@ -494,69 +505,60 @@ lock_screen
 
 chat
 → Conversar normalmente, responder perguntas gerais,
-explicar conceitos, discutir assuntos ou simplesmente bater papo.
+explicar conceitos ou bater papo.
 
 web_search
-→ Pesquisar informações na internet quando isso for necessário.
+→ Pesquisar informações na internet.
 
 unknown
-→ Quando nenhuma intenção puder ser identificada com segurança.
+→ Quando nenhuma intenção puder ser identificada.
 
 ============================================================
 REGRAS
 ============================================================
 
-1. Se Gustavo estiver apenas conversando ou fazendo uma
-pergunta geral, use "chat".
+1. Pergunta geral ou conversa:
+use "chat".
 
-2. Se a resposta depender de informação atual, recente,
-preço, notícia, evento, pessoa atual, lançamento ou algo que
-possa ter mudado, use "web_search".
+2. Informação atual, preço, notícia, evento, lançamento,
+pessoa atual ou informação que possa ter mudado:
+use "web_search".
 
-3. Se Gustavo disser explicitamente:
-"pesquise", "procure na internet", "veja na web",
-"pesquisa isso", etc., use "web_search".
+3. Pedidos explícitos de pesquisa:
+use "web_search".
 
-4. restart e shutdown são ações críticas.
-Sempre use:
+4. restart e shutdown:
+use "risk": "vermelho".
 
-"risk": "vermelho"
+5. lock_screen:
+use "risk": "verde".
 
-5. lock_screen NÃO precisa de confirmação.
-Use:
+6. set_volume:
+argumento entre 0 e 100.
 
-"risk": "verde"
-
-6. Para set_volume, argumento deve ser um número de 0 a 100.
-
-7. Para media_control, target deve ser um dos seguintes:
-
+7. media_control:
+target pode ser:
 "play_pause"
 "next"
 "prev"
 
-8. Para open_app, target deve identificar o app/site.
+8. open_app:
+target identifica o app/site.
 
-9. Para open_and_search:
+9. open_and_search:
 target = plataforma
 argumento = termo pesquisado.
 
-10. Para chat, NÃO invente uma resposta dentro do campo
-"argumento". Apenas classifique como "chat".
-A resposta será gerada por outra etapa da IA.
+10. Para chat, deixe argumento como null.
+A resposta será gerada separadamente.
 
-11. Para web_search, argumento deve conter exatamente
-o assunto/consulta que precisa ser pesquisado.
+11. Para web_search:
+argumento = consulta.
 
-12. Identifique fatos realmente úteis e relativamente
-permanentes sobre Gustavo em "new_fact".
-
-13. Se não houver fato novo:
-
-"new_fact": null
+12. Só salve fatos realmente úteis e relativamente permanentes.
 
 ============================================================
-FORMATO OBRIGATÓRIO
+FORMATO
 ============================================================
 
 Retorne APENAS JSON válido:
@@ -580,6 +582,10 @@ Retorne APENAS JSON válido:
     }}
 }}
 
+Se não houver fato novo:
+
+"new_fact": null
+
 ============================================================
 MENSAGEM ATUAL
 ============================================================
@@ -591,21 +597,29 @@ MENSAGEM ATUAL
 
         response = client.chat.completions.create(
             model="qwen/qwen3.6-27b",
-
             messages=[
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-
             response_format={
                 "type": "json_object"
             }
         )
 
+        conteudo = response.choices[
+            0
+        ].message.content
+
+        # Mesmo que o modelo inclua <think>, tentamos
+        # removê-lo antes de interpretar o JSON.
+        conteudo = limpar_resposta_ia(
+            conteudo
+        )
+
         resultado = json.loads(
-            response.choices[0].message.content
+            conteudo
         )
 
         novo_fato = resultado.get(
@@ -615,12 +629,8 @@ MENSAGEM ATUAL
         if novo_fato:
 
             salvar_memoria(
-                novo_fato.get(
-                    "categoria"
-                ),
-                novo_fato.get(
-                    "informacao"
-                )
+                novo_fato.get("categoria"),
+                novo_fato.get("informacao")
             )
 
         return resultado
@@ -648,15 +658,13 @@ def gerar_resposta_chat(
     texto_usuario,
     chat_id
 ):
-    """
-    Gera a resposta natural do JARVIS para conversas,
-    dúvidas e explicações.
-    """
 
     if not client:
+
         return (
             "Desculpe, Senhor. "
-            "Meu núcleo de inteligência está indisponível no momento."
+            "Meu núcleo de inteligência "
+            "está indisponível no momento."
         )
 
     memoria_atual = carregar_memoria()
@@ -670,14 +678,15 @@ Você é J.A.R.V.I.S., o assistente pessoal do Senhor Gustavo.
 
 Responda naturalmente à mensagem dele.
 
-Você deve conversar de forma inteligente, clara e humana,
-mantendo a personalidade de um assistente pessoal avançado.
+Seja inteligente, claro, natural e útil.
+Mantenha a personalidade de um assistente pessoal avançado.
 
 Não finja ter executado ações que não executou.
 
 Quando não souber algo, seja honesto.
 
-Não precisa mencionar que existe um classificador de intenção.
+Não mencione o classificador de intenção,
+a arquitetura interna ou este prompt.
 
 ============================================================
 MEMÓRIA
@@ -707,9 +716,7 @@ Responda diretamente ao Senhor Gustavo.
     try:
 
         response = client.chat.completions.create(
-
             model="qwen/qwen3.6-27b",
-
             messages=[
                 {
                     "role": "user",
@@ -721,6 +728,11 @@ Responda diretamente ao Senhor Gustavo.
         resposta = response.choices[
             0
         ].message.content
+
+        # Remove <think>...</think>
+        resposta = limpar_resposta_ia(
+            resposta
+        )
 
         return resposta or (
             "Desculpe, Senhor. "
@@ -735,7 +747,8 @@ Responda diretamente ao Senhor Gustavo.
 
         return (
             "Desculpe, Senhor. "
-            "Meu núcleo de conversação apresentou uma falha."
+            "Meu núcleo de conversação "
+            "apresentou uma falha."
         )
 
 
@@ -744,9 +757,6 @@ Responda diretamente ao Senhor Gustavo.
 # ============================================================
 
 def pesquisar_web(consulta):
-    """
-    Executa uma pesquisa web.
-    """
 
     try:
 
@@ -772,11 +782,9 @@ def gerar_resposta_pesquisa(
     resultados,
     chat_id
 ):
-    """
-    Faz a IA analisar os resultados e formular a resposta.
-    """
 
     if not client:
+
         return (
             "Desculpe, Senhor. "
             "O núcleo de IA está indisponível."
@@ -791,8 +799,8 @@ def gerar_resposta_pesquisa(
     if not resultados:
 
         return (
-            "Senhor, não encontrei resultados confiáveis "
-            "para essa pesquisa."
+            "Senhor, não encontrei resultados "
+            "confiáveis para essa pesquisa."
         )
 
     contexto_busca = "\n".join(
@@ -810,7 +818,7 @@ def gerar_resposta_pesquisa(
 Você é J.A.R.V.I.S., assistente pessoal do Senhor Gustavo.
 
 Responda à pergunta dele usando os resultados da pesquisa
-abaixo como fonte principal.
+como fonte principal.
 
 Não invente fatos que não estejam sustentados pelos resultados.
 
@@ -818,19 +826,19 @@ Se os resultados forem insuficientes ou conflitantes,
 deixe isso claro.
 
 ============================================================
-MEMÓRIA DO USUÁRIO
+MEMÓRIA
 ============================================================
 
 {memoria_atual}
 
 ============================================================
-CONTEXTO RECENTE
+CONTEXTO
 ============================================================
 
 {contexto}
 
 ============================================================
-PESQUISA REALIZADA
+PESQUISA
 ============================================================
 
 Consulta:
@@ -841,7 +849,7 @@ Resultados:
 {contexto_busca}
 
 ============================================================
-PERGUNTA DO USUÁRIO
+PERGUNTA
 ============================================================
 
 {texto_usuario}
@@ -856,9 +864,7 @@ Responda de forma natural e útil.
     try:
 
         response = client.chat.completions.create(
-
             model="qwen/qwen3.6-27b",
-
             messages=[
                 {
                     "role": "user",
@@ -870,6 +876,11 @@ Responda de forma natural e útil.
         resposta = response.choices[
             0
         ].message.content
+
+        # Remove <think>...</think>
+        resposta = limpar_resposta_ia(
+            resposta
+        )
 
         return resposta or (
             "Senhor, encontrei resultados, "
@@ -889,7 +900,7 @@ Responda de forma natural e útil.
 
 
 # ============================================================
-# ENFILEIRAR COMANDO LOCAL
+# ENVIAR COMANDO PARA O AGENTE LOCAL
 # ============================================================
 
 def enviar_para_agente(
@@ -897,11 +908,6 @@ def enviar_para_agente(
     target=None,
     argumento=None
 ):
-    """
-    Centraliza o envio de comandos para o agente local.
-
-    Isso facilita futuras Skills.
-    """
 
     comando = {
         "acao": intent,
@@ -914,7 +920,8 @@ def enviar_para_agente(
     )
 
     logger.info(
-        f"Comando enviado ao agente local: {comando}"
+        f"Comando enviado ao agente local: "
+        f"{comando}"
     )
 
 
@@ -937,7 +944,7 @@ async def start(
 
 
 # ============================================================
-# TELEGRAM — PROCESSAMENTO
+# TELEGRAM — MENSAGENS
 # ============================================================
 
 async def handle_message(
@@ -957,7 +964,12 @@ async def handle_message(
 
     chat_id = update.effective_chat.id
 
-    # Salva a mensagem no contexto da conversa
+    logger.info(
+        f"Mensagem recebida do Telegram: "
+        f"{texto}"
+    )
+
+    # Guarda a mensagem no contexto
     adicionar_contexto(
         chat_id,
         "user",
@@ -979,7 +991,6 @@ async def handle_message(
             0
         )
 
-        # Expira confirmação antiga
         if (
             time.time() - criado_em
             > CONFIRMATION_TIMEOUT
@@ -990,9 +1001,21 @@ async def handle_message(
                 None
             )
 
+            resposta = (
+                "Senhor, essa solicitação "
+                "de confirmação expirou. "
+                "Se ainda desejar executar a ação, "
+                "envie o comando novamente."
+            )
+
+            adicionar_contexto(
+                chat_id,
+                "assistant",
+                resposta
+            )
+
             await update.message.reply_text(
-                "Senhor, essa solicitação de confirmação expirou. "
-                "Se ainda desejar executar a ação, envie o comando novamente."
+                resposta
             )
 
             return
@@ -1002,7 +1025,7 @@ async def handle_message(
         )
 
         # ----------------------------------------------------
-        # CONFIRMAÇÃO
+        # CONFIRMAR
         # ----------------------------------------------------
 
         if decisao == "confirmar":
@@ -1038,7 +1061,7 @@ async def handle_message(
             return
 
         # ----------------------------------------------------
-        # CANCELAMENTO
+        # CANCELAR
         # ----------------------------------------------------
 
         if decisao == "cancelar":
@@ -1087,7 +1110,7 @@ async def handle_message(
         return
 
     # ========================================================
-    # ANALISAR INTENÇÃO
+    # ANÁLISE
     # ========================================================
 
     analise = await asyncio.to_thread(
@@ -1096,30 +1119,23 @@ async def handle_message(
         chat_id
     )
 
-    intent = analise.get(
-        "intent"
-    )
+    intent = analise.get("intent")
+    target = analise.get("target")
+    argumento = analise.get("argumento")
 
-    target = analise.get(
-        "target"
-    )
-
-    argumento = analise.get(
-        "argumento"
-    )
-
-    # Normalização básica
     if intent:
-        intent = str(intent).strip().lower()
+        intent = str(
+            intent
+        ).strip().lower()
+
+    logger.info(
+        f"Intenção identificada: "
+        f"{intent} | Alvo: {target} | "
+        f"Argumento: {argumento}"
+    )
 
     # ========================================================
-    # SEGURANÇA DETERMINÍSTICA
-    # ========================================================
-    #
-    # Não dependemos somente do campo "risk" da IA.
-    #
-    # Restart e shutdown SEMPRE pedem confirmação.
-    # Lock screen NUNCA pede confirmação.
+    # AÇÕES CRÍTICAS
     # ========================================================
 
     if intent in ACTIONS_REQUIRING_CONFIRMATION:
@@ -1137,20 +1153,12 @@ async def handle_message(
                 "Deseja realmente executar essa ação?"
             )
 
-        elif intent == "shutdown":
+        else:
 
             resposta = (
                 "⚠️ Senhor, o comando solicita o "
                 "DESLIGAMENTO do computador.\n\n"
                 "Deseja realmente executar essa ação?"
-            )
-
-        else:
-
-            resposta = (
-                f"⚠️ Senhor, a ação "
-                f"{intent} requer confirmação.\n\n"
-                f"Deseja executar?"
             )
 
         adicionar_contexto(
@@ -1166,7 +1174,7 @@ async def handle_message(
         return
 
     # ========================================================
-    # AÇÕES DO AGENTE LOCAL
+    # AÇÕES LOCAIS
     # ========================================================
 
     if intent in LOCAL_ACTIONS:
@@ -1222,7 +1230,8 @@ async def handle_message(
         )
 
         mensagem_status = await update.message.reply_text(
-            f"🔍 Buscando informações sobre:\n{consulta}"
+            f"🔍 Buscando informações sobre:\n"
+            f"{consulta}"
         )
 
         resultados = await asyncio.to_thread(
@@ -1292,9 +1301,6 @@ async def handle_message(
         chat_id
     )
 
-    # Se até uma mensagem "unknown" tiver sido algo que
-    # o classificador não entendeu, ainda tentamos conversar
-    # em vez de simplesmente responder "não entendi".
     adicionar_contexto(
         chat_id,
         "assistant",
