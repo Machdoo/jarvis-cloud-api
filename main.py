@@ -8,6 +8,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from groq import Groq
 import gspread
+from duckduckgo_search import DDGS  # Nova biblioteca de pesquisa!
 
 # --- CONFIGURAÇÃO DE LOGS ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -74,19 +75,15 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
     
     --- FATOS SOBRE O USUÁRIO (MEMÓRIA PERMANENTE) ---
     {memoria_atual}
-    
-    --- CONTEXTO DA CONVERSA ANTERIOR ---
-    - Última intenção: {contexto_anterior.get('last_intent')}
-    - Último alvo: {contexto_anterior.get('last_target')}
 
     Instruções:
-    1. Analise o comando.
-    2. Identifique se você DEVE APRENDER algo novo sobre o usuário (uma preferência, um nome, um projeto, rotina).
-    3. Retorne APENAS um JSON válido com a estrutura:
+    1. Analise o comando do usuário.
+    2. Identifique se você DEVE APRENDER algo novo (preferência, nome, rotina).
+    3. Retorne APENAS um JSON válido com a estrutura abaixo:
     {{
-      "intent": "open_app" | "open_and_search" | "send_whatsapp" | "restart" | "shutdown" | "chat" | "unknown",
+      "intent": "open_app" | "open_and_search" | "send_whatsapp" | "restart" | "shutdown" | "chat" | "web_search" | "unknown",
       "target": "nome do app, site, ou número (ou null)",
-      "argumento": "termo de busca, ou a MENSAGEM que você vai responder se a intent for 'chat' (ou null)",
+      "argumento": "termo de busca, resposta do chat, ou o que pesquisar na internet se for web_search (ou null)",
       "risk": "verde" ou "vermelho",
       "new_fact": {{
           "categoria": "Preferência|Contato|Rotina|Projeto|Outros",
@@ -94,7 +91,10 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
       }} // Retorne null se não houver nada de novo para salvar.
     }}
     
-    Nota: Se for apenas uma conversa, cumprimento, ou pergunta que você saiba responder, use a intent "chat" e coloque a sua resposta no campo "argumento", falando como o J.A.R.V.I.S. falaria com o Senhor.
+    Diferenças importantes:
+    - open_and_search: O usuário quer abrir um site NO COMPUTADOR DELE e pesquisar (ex: "pesquisa música no youtube").
+    - web_search: O usuário faz uma pergunta que exige buscar informações atuais da internet para RESPONDER NO CHAT (ex: "Qual a previsão do tempo?", "Quem ganhou o jogo ontem?").
+    - chat: Apenas conversa comum, responder no campo argumento.
     
     Comando atual: "{texto_usuario}"
     """
@@ -112,12 +112,6 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
         if novo_fato:
             salvar_memoria(novo_fato.get("categoria"), novo_fato.get("informacao"))
             
-        if resultado.get("intent") != "unknown":
-            user_context[chat_id] = {
-                "last_intent": resultado.get("intent"),
-                "last_target": resultado.get("target")
-            }
-            
         return resultado
     except Exception as e:
         logger.error(f"Erro na IA: {e}")
@@ -125,19 +119,18 @@ def analisar_intencao(texto_usuario: str, chat_id: int):
 
 # --- LÓGICA DO TELEGRAM ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Core Online. Acesso à Memória Permanente estabelecido, Senhor.")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="J.A.R.V.I.S. Core Online com Memória Neural e Acesso à Internet, Senhor.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global pending_actions, historico_logs
+    global pending_actions
     texto = update.message.text
     chat_id = update.effective_chat.id
 
-    # VERIFICAÇÃO DE RISCO (Ações de desligar PC)
+    # VERIFICAÇÃO DE RISCO
     if chat_id in pending_actions:
         if "sim" in texto.lower() or "confirmo" in texto.lower():
             acao_confirmada = pending_actions.pop(chat_id)
             fila_comandos.put({"acao": acao_confirmada, "target": None, "argumento": None})
-            historico_logs.append(f"[EXECUTADO] Ação crítica: {acao_confirmada}")
             await update.message.reply_text(f"Comando confirmado, Senhor. Executando: {acao_confirmada}.")
         else:
             pending_actions.pop(chat_id)
@@ -159,10 +152,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # EXECUÇÃO DE SKILLS DO PC
     if intent in ["open_app", "open_and_search", "send_whatsapp"]:
         fila_comandos.put({"acao": intent, "target": target, "argumento": argumento})
-        historico_logs.append(f"[EXECUTADO] {intent} -> Alvo: {target} | Arg: {argumento}")
         await update.message.reply_text("Comando processado para a máquina local, Senhor.")
 
-    # BATE-PAPO COM A IA (NÃO ENVIA PRO PC)
+    # NOVA SKILL: PESQUISA NA INTERNET (RESPONDER NO TELEGRAM)
+    elif intent == "web_search":
+        mensagem_status = await update.message.reply_text(f"🔍 Acessando a rede para buscar informações sobre: *{argumento}*...", parse_mode="Markdown")
+        try:
+            # 1. Faz a busca silenciosa na internet
+            resultados = DDGS().text(argumento, max_results=3)
+            contexto_busca = "\n".join([f"- {r['title']}: {r['body']}" for r in resultados])
+            
+            # 2. Pede pra IA resumir a resposta com base nos sites encontrados
+            prompt_resposta = f"Responda ao usuário como J.A.R.V.I.S. usando APENAS as informações desta pesquisa recente:\n{contexto_busca}\n\nPergunta do usuário: {texto}"
+            
+            resp = client.chat.completions.create(
+                model="qwen/qwen3.6-27b",
+                messages=[{"role": "user", "content": prompt_resposta}]
+            )
+            resposta_final = resp.choices[0].message.content
+            
+            # 3. Envia o resultado final editando a mensagem
+            await mensagem_status.edit_text(resposta_final, parse_mode="Markdown")
+            
+        except Exception as e:
+            logger.error(f"Erro na pesquisa web: {e}")
+            await mensagem_status.edit_text("Desculpe, Senhor. Meus protocolos de acesso à rede falharam ao tentar buscar essa informação.")
+
+    # BATE-PAPO COM A IA
     elif intent == "chat":
         await update.message.reply_text(argumento, parse_mode="Markdown")
         
@@ -175,7 +191,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Tem certeza que deseja DESLIGAR o computador? Responda 'sim' para confirmar.")
         
     else:
-        historico_logs.append(f"[FALHA] Comando não compreendido: {texto}")
         await update.message.reply_text("Desculpe Senhor, minha lógica central não conseguiu processar esse comando.")
 
 # --- CICLO DE VIDA ---
@@ -201,7 +216,7 @@ async def shutdown_event():
 
 @app.get("/")
 def home():
-    return {"status": "Jarvis Core com Memória Neural Online, Senhor!"}
+    return {"status": "Jarvis Core Online!"}
 
 @app.get("/pegar-comando")
 def pegar_comando():
