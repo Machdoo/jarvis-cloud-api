@@ -8,7 +8,7 @@ import unicodedata
 import random
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 import queue
 
 from telegram import Update
@@ -55,7 +55,24 @@ client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 app = FastAPI()
 telegram_app = None
 
+# Fila temporária de comandos locais.
 fila_comandos = queue.Queue()
+
+# Estado do agente local
+AGENT_OFFLINE_AFTER = 30
+agent_last_seen = 0.0
+
+# URL pública do Render usada pelo webhook do Telegram.
+RENDER_EXTERNAL_URL = os.getenv(
+    "RENDER_EXTERNAL_URL",
+    "https://jarvis-cloud-api-qp03.onrender.com"
+).rstrip("/")
+
+# Token secreto opcional para validar os webhooks recebidos do Telegram.
+TELEGRAM_WEBHOOK_SECRET = os.getenv(
+    "TELEGRAM_WEBHOOK_SECRET",
+    ""
+)
 
 # Guarda ações críticas aguardando confirmação
 pending_actions = {}
@@ -1690,6 +1707,13 @@ Responda naturalmente.
 # ENVIAR COMANDO AO AGENTE LOCAL
 # ============================================================
 
+def agente_esta_online():
+    return (
+        agent_last_seen > 0
+        and (time.time() - agent_last_seen) <= AGENT_OFFLINE_AFTER
+    )
+
+
 def enviar_para_agente(
     intent,
     target=None,
@@ -1702,14 +1726,20 @@ def enviar_para_agente(
         "argumento": argumento
     }
 
-    fila_comandos.put(
-        comando
-    )
+    if not agente_esta_online():
+        logger.warning(
+            "Comando local não enfileirado: agente local está offline."
+        )
+        return False
+
+    fila_comandos.put(comando)
 
     logger.info(
         f"Comando enviado ao agente local: "
         f"{comando}"
     )
+
+    return True
 
 
 # ============================================================
@@ -1844,18 +1874,34 @@ async def handle_message(
                 None
             )
 
+            comandos_enviados = 0
+
             for acao in acoes_confirmadas:
 
-                enviar_para_agente(
+                if enviar_para_agente(
                     acao["intent"],
                     acao.get("target"),
                     acao.get("argumento")
-                )
+                ):
+                    comandos_enviados += 1
 
-            resposta = resposta_confirmacao_sucesso(
-                acoes_confirmadas,
-                idioma
-            )
+            if comandos_enviados == len(acoes_confirmadas):
+                resposta = resposta_confirmacao_sucesso(
+                    acoes_confirmadas,
+                    idioma
+                )
+            else:
+                respostas_offline_confirmacao = {
+                    "pt": "🔴 O PC ficou offline antes da execução. A ação não foi enviada.",
+                    "en": "🔴 The PC went offline before execution. The action was not sent.",
+                    "fr": "🔴 Le PC est passé hors ligne avant l’exécution. L’action n’a pas été envoyée.",
+                    "es": "🔴 El PC quedó desconectado antes de la ejecución. La acción no fue enviada."
+                }
+
+                resposta = respostas_offline_confirmacao.get(
+                    idioma,
+                    respostas_offline_confirmacao["pt"]
+                )
 
             adicionar_contexto(
                 chat_id,
@@ -2119,20 +2165,35 @@ async def handle_message(
 
         if intent in LOCAL_ACTIONS:
 
-            enviar_para_agente(
+            enviado = enviar_para_agente(
                 intent,
                 target,
                 argumento
             )
 
-            respostas_acoes.append(
-                resposta_acao_local(
-                    intent,
-                    target,
-                    argumento,
-                    idioma
+            if enviado:
+                respostas_acoes.append(
+                    resposta_acao_local(
+                        intent,
+                        target,
+                        argumento,
+                        idioma
+                    )
                 )
-            )
+            else:
+                mensagens_offline = {
+                    "pt": "🔴 O PC está offline ou o agente local não está conectado.",
+                    "en": "🔴 The PC is offline or the local agent is not connected.",
+                    "fr": "🔴 Le PC est hors ligne ou l’agent local n’est pas connecté.",
+                    "es": "🔴 El PC está desconectado o el agente local no está conectado."
+                }
+
+                respostas_acoes.append(
+                    mensagens_offline.get(
+                        idioma,
+                        mensagens_offline["pt"]
+                    )
+                )
 
         # ----------------------------------------------------
         # PESQUISA WEB
@@ -2277,9 +2338,11 @@ async def startup_event():
 
     try:
 
+        # O FastAPI recebe os webhooks do Telegram diretamente.
         telegram_app = (
             ApplicationBuilder()
             .token(TELEGRAM_TOKEN)
+            .updater(None)
             .build()
         )
 
@@ -2298,23 +2361,32 @@ async def startup_event():
         )
 
         await telegram_app.initialize()
-
         await telegram_app.start()
 
-        await telegram_app.updater.start_polling(
-            drop_pending_updates=False
+        webhook_url = f"{RENDER_EXTERNAL_URL}/telegram/webhook"
+
+        webhook_kwargs = {
+            "url": webhook_url,
+            "allowed_updates": Update.ALL_TYPES,
+        }
+
+        if TELEGRAM_WEBHOOK_SECRET:
+            webhook_kwargs["secret_token"] = TELEGRAM_WEBHOOK_SECRET
+
+        await telegram_app.bot.set_webhook(
+            **webhook_kwargs
         )
 
         logger.info(
-            "J.A.R.V.I.S. Telegram Polling iniciado."
+            f"J.A.R.V.I.S. Telegram Webhook configurado: "
+            f"{webhook_url}"
         )
 
     except Exception as e:
 
         logger.exception(
-            f"Erro ao iniciar o Telegram: {e}"
+            f"Erro ao iniciar o Telegram via Webhook: {e}"
         )
-
 
 # ============================================================
 # SHUTDOWN
@@ -2330,11 +2402,11 @@ async def shutdown_event():
 
     try:
 
-        if telegram_app.updater:
-            await telegram_app.updater.stop()
+        await telegram_app.bot.delete_webhook(
+            drop_pending_updates=False
+        )
 
         await telegram_app.stop()
-
         await telegram_app.shutdown()
 
         logger.info(
@@ -2347,7 +2419,6 @@ async def shutdown_event():
             f"Erro ao encerrar Telegram: {e}"
         )
 
-
 # ============================================================
 # ROTAS FASTAPI
 # ============================================================
@@ -2358,16 +2429,94 @@ def home():
     return {
         "status":
         "JARVIS Core Online — "
-        "Conversação, Memória, Web e Controle Local ativos."
+        "Conversação, Memória, Web e Controle Local ativos.",
+        "agent_online": agente_esta_online()
+    }
+
+
+@app.get("/status")
+def status():
+
+    ultimo_heartbeat = (
+        time.time() - agent_last_seen
+        if agent_last_seen > 0
+        else None
+    )
+
+    return {
+        "jarvis": "online",
+        "agent_online": agente_esta_online(),
+        "agent_last_seen_seconds": ultimo_heartbeat
+    }
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+
+    if not telegram_app:
+        logger.error(
+            "Webhook do Telegram recebido antes do bot ser inicializado."
+        )
+        return Response(status_code=503)
+
+    if TELEGRAM_WEBHOOK_SECRET:
+
+        recebido = request.headers.get(
+            "X-Telegram-Bot-Api-Secret-Token"
+        )
+
+        if recebido != TELEGRAM_WEBHOOK_SECRET:
+            logger.warning(
+                "Webhook do Telegram rejeitado: secret token inválido."
+            )
+            return Response(status_code=403)
+
+    try:
+
+        data = await request.json()
+
+        update = Update.de_json(
+            data=data,
+            bot=telegram_app.bot
+        )
+
+        await telegram_app.update_queue.put(
+            update
+        )
+
+        return Response(status_code=200)
+
+    except Exception as e:
+
+        logger.exception(
+            f"Erro ao processar webhook do Telegram: {e}"
+        )
+
+        return Response(status_code=500)
+
+
+@app.post("/agente/heartbeat")
+def agente_heartbeat():
+
+    global agent_last_seen
+
+    agent_last_seen = time.time()
+
+    return {
+        "status": "ok",
+        "agent_online": True
     }
 
 
 @app.get("/pegar-comando")
 def pegar_comando():
 
-    if not fila_comandos.empty():
+    # Long polling: espera por até 25s por um comando.
+    try:
 
-        comando = fila_comandos.get()
+        comando = fila_comandos.get(
+            timeout=25
+        )
 
         logger.info(
             f"Agente local retirou comando da fila: "
@@ -2376,6 +2525,8 @@ def pegar_comando():
 
         return comando
 
-    return {
-        "status": "vazio"
-    }
+    except queue.Empty:
+
+        return {
+            "status": "vazio"
+        }
