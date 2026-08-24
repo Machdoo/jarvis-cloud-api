@@ -2417,10 +2417,6 @@ async def shutdown_event():
 
     try:
 
-        await telegram_app.bot.delete_webhook(
-            drop_pending_updates=False
-        )
-
         await telegram_app.stop()
         await telegram_app.shutdown()
 
@@ -2432,7 +2428,7 @@ async def shutdown_event():
 
         logger.error(
             f"Erro ao encerrar Telegram: {e}"
-        )
+    )
 
 # ============================================================
 # ROTAS FASTAPI
