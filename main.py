@@ -1348,7 +1348,7 @@ MENSAGEM ATUAL
     try:
 
         response = client.chat.completions.create(
-            model="qwen/qwen3.6-27b",
+            model="openai/gpt-oss-120b",
             messages=[
                 {
                     "role": "user",
@@ -1493,7 +1493,7 @@ Responda agora.
     try:
 
         response = client.chat.completions.create(
-            model="qwen/qwen3.6-27b",
+            model="openai/gpt-oss-120b",
             messages=[
                 {
                     "role": "user",
@@ -1684,7 +1684,7 @@ Responda naturalmente.
     try:
 
         response = client.chat.completions.create(
-            model="qwen/qwen3.6-27b",
+            model="openai/gpt-oss-120b",
             messages=[
                 {
                     "role": "user",
@@ -2417,6 +2417,10 @@ async def shutdown_event():
 
     try:
 
+        await telegram_app.bot.delete_webhook(
+            drop_pending_updates=False
+        )
+
         await telegram_app.stop()
         await telegram_app.shutdown()
 
@@ -2428,7 +2432,7 @@ async def shutdown_event():
 
         logger.error(
             f"Erro ao encerrar Telegram: {e}"
-    )
+        )
 
 # ============================================================
 # ROTAS FASTAPI
