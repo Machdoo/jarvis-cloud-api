@@ -114,6 +114,8 @@ ACTIONS_REQUIRING_CONFIRMATION = {
 SUPPORTED_INTENTS = LOCAL_ACTIONS | CRITICAL_ACTIONS | {
     "chat",
     "web_search",
+    "spotify_play",
+    "youtube_playlist",
     "unknown"
 }
 
@@ -1438,6 +1440,29 @@ Se não houver fato novo:
 "new_fact": null
 
 ============================================================
+EXEMPLOS DE MÚSICA
+============================================================
+
+"Toca minha playlist de rock"
+→ [spotify_play, spotify, "rock"]
+
+"Toca um rock aí pra tropa"
+→ [spotify_play, spotify, "rock"]
+
+"Coloca a global"
+→ [spotify_play, spotify, "global"]
+
+"Abre minhas FuteParódias"
+→ [youtube_playlist, futeparodias, null]
+
+"Coloca as FuteParódias aí"
+→ [youtube_playlist, futeparodias, null]
+
+Importante: pedidos para reproduzir playlists NÃO devem virar
+media_control/play_pause. media_control é apenas para pausar,
+retomar, próxima ou anterior.
+
+============================================================
 MENSAGEM ATUAL
 ============================================================
 
@@ -2433,6 +2458,149 @@ async def handle_message(
     )
 
 
+
+# ============================================================
+# ENTRADA DE VOZ — PROCESSAMENTO DIRETO
+# ============================================================
+
+async def processar_entrada_voz(
+    texto,
+    origem_dispositivo="pc"
+):
+    """
+    Processa texto vindo do Hands-Free sem criar uma mensagem no Telegram.
+    Nesta fase, executa ações locais não críticas e devolve uma resposta
+    textual para o agente de voz usar futuramente no TTS.
+    """
+    texto = str(texto or "").strip()
+
+    if not texto:
+        return {
+            "ok": False,
+            "response": "Não entendi nada.",
+            "actions": []
+        }
+
+    logger.info(
+        f"[VOICE] Entrada recebida | Origem: {origem_dispositivo} | Texto: {texto}"
+    )
+
+    # O chat_id -1 impede mistura com o histórico do Telegram.
+    voice_chat_id = f"voice:{origem_dispositivo}"
+
+    analise = await asyncio.to_thread(
+        analisar_intencao,
+        texto,
+        voice_chat_id
+    )
+
+    acoes = analise.get("actions", [])
+    acoes = [
+        acao for acao in acoes
+        if acao.get("intent") != "unknown"
+    ]
+
+    if not acoes:
+        resposta = await asyncio.to_thread(
+            gerar_resposta_chat,
+            texto,
+            voice_chat_id
+        )
+        return {
+            "ok": True,
+            "response": resposta,
+            "actions": []
+        }
+
+    respostas = []
+    executadas = []
+
+    for acao in acoes:
+        intent = acao.get("intent")
+        target = acao.get("target")
+        argumento = acao.get("argumento")
+
+        # Ações críticas continuam bloqueadas até adicionarmos
+        # confirmação por voz na próxima etapa do Hands-Free.
+        if intent in ACTIONS_REQUIRING_CONFIRMATION:
+            respostas.append(
+                "Essa é uma ação crítica. A confirmação por voz ainda não está habilitada."
+            )
+            continue
+
+        if intent in LOCAL_ACTIONS:
+            enviado = enviar_para_agente(
+                intent,
+                target,
+                argumento
+            )
+
+            if enviado:
+                respostas.append(
+                    resposta_acao_local(
+                        intent,
+                        target,
+                        argumento,
+                        detectar_idioma(texto)
+                    )
+                )
+                executadas.append(acao)
+            else:
+                respostas.append(
+                    "O PC está offline ou o agente local não está conectado."
+                )
+            continue
+
+        if intent in {"spotify_play", "youtube_playlist"}:
+            # Essas intenções também são executadas pelo Agent Local.
+            enviado = enviar_para_agente(
+                intent,
+                target,
+                argumento
+            )
+            if enviado:
+                if intent == "spotify_play":
+                    respostas.append("🎵 Reproduzindo a playlist.")
+                else:
+                    respostas.append("⚽ Abrindo as FuteParódias.")
+                executadas.append(acao)
+            else:
+                respostas.append(
+                    "O PC está offline ou o agente local não está conectado."
+                )
+            continue
+
+        if intent == "web_search":
+            consulta = str(argumento).strip() if argumento else texto
+            resultados = await asyncio.to_thread(
+                pesquisar_web,
+                consulta
+            )
+            resposta = await asyncio.to_thread(
+                gerar_resposta_pesquisa,
+                texto,
+                consulta,
+                resultados,
+                voice_chat_id
+            )
+            respostas.append(resposta)
+            continue
+
+        if intent == "chat":
+            resposta = await asyncio.to_thread(
+                gerar_resposta_chat,
+                texto,
+                voice_chat_id
+            )
+            respostas.append(resposta)
+            continue
+
+    return {
+        "ok": True,
+        "response": "\n".join(respostas) if respostas else "Comando processado.",
+        "actions": executadas
+    }
+
 # ============================================================
 # STARTUP
 # ============================================================
@@ -2563,6 +2731,37 @@ def status():
         "agent_last_seen_seconds": ultimo_heartbeat
     }
 
+
+
+@app.post("/entrada-voz")
+async def entrada_voz(request: Request):
+    """Recebe texto reconhecido pelo Hands-Free do Agent Local."""
+    try:
+        data = await request.json()
+        texto = str(data.get("text", "")).strip()
+        origem = str(
+            data.get("origin_device", "pc")
+        ).strip() or "pc"
+
+        if not texto:
+            return {
+                "ok": False,
+                "response": "Nenhum texto de voz recebido.",
+                "actions": []
+            }
+
+        resultado = await processar_entrada_voz(
+            texto,
+            origem
+        )
+
+        return resultado
+
+    except Exception as e:
+        logger.exception(
+            f"Erro ao processar entrada de voz: {e}"
+        )
+        return Response(status_code=500)
 
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
