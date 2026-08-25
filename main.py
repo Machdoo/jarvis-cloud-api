@@ -1284,30 +1284,61 @@ argumento de 0 a 100.
 target = play_pause, next ou prev.
 
 11. open_app:
-target identifica o app/site.
+target identifica o aplicativo ou site.
 
 12. open_and_search:
 target = plataforma.
 argumento = termo pesquisado.
 
-13. Se Gustavo pedir várias ações locais,
+13. Se Gustavo pedir para abrir um aplicativo e também
+fornecer texto para escrever nele:
+intent = "open_app"
+target = aplicativo
+argumento = texto exato solicitado.
+
+14. Se Gustavo pedir para abrir o Bloco de Notas e escrever
+alguma coisa, preserve exatamente o texto solicitado em
+"argumento".
+
+15. Se Gustavo pedir para abrir o Spotify:
+intent = "open_app"
+target = "spotify"
+argumento = null.
+
+16. Se Gustavo pedir para abrir uma playlist do Spotify
+pelo nome, apelido ou descrição:
+intent = "open_app"
+target = "spotify"
+argumento = nome ou apelido da playlist.
+
+Exemplo:
+"Abre minha playlist de romance"
+→ target = "spotify"
+→ argumento = "romance"
+
+17. Se Gustavo fornecer uma URL ou URI de playlist do Spotify:
+intent = "open_app"
+target = "spotify"
+argumento = URL ou URI exata.
+
+18. Se Gustavo pedir várias ações locais,
 retorne uma ação para cada uma.
 
-14. Não combine várias ações dentro de um único objeto.
+19. Não combine várias ações dentro de um único objeto.
 
-15. Para uma conversa normal:
+20. Para uma conversa normal:
 retorne apenas uma ação "chat".
 
-16. Para uma pesquisa:
+21. Para uma pesquisa:
 retorne apenas uma ação "web_search",
 a menos que Gustavo também tenha pedido explicitamente
 outras ações separadas.
 
-17. Se houver restart/shutdown junto com outras ações:
+22. Se houver restart/shutdown junto com outras ações:
 retorne todas elas normalmente.
 O sistema externo cuidará da confirmação da ação crítica.
 
-18. Só salve fatos úteis e relativamente permanentes.
+23. Só salve fatos úteis e relativamente permanentes.
 
 ============================================================
 FORMATO JSON OBRIGATÓRIO
