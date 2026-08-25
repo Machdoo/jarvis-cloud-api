@@ -95,6 +95,8 @@ LOCAL_ACTIONS = {
     "open_and_search",
     "send_whatsapp",
     "media_control",
+    "spotify_play",
+    "youtube_playlist",
     "set_volume",
     "lock_screen",
 }
@@ -536,6 +538,12 @@ def resposta_acao_local(
                 "🎵 Commande multimédia envoyée."
             )
 
+        if intent == "spotify_play":
+            return f"🎵 Lecture Spotify: {argumento}." if argumento else "🎵 Iniciando reprodução no Spotify."
+
+        if intent == "youtube_playlist":
+            return "⚽ Abrindo as FuteParódias no YouTube."
+
         return "C'est bon. Commande envoyée au PC."
 
     if idioma == "en":
@@ -558,6 +566,12 @@ def resposta_acao_local(
                 target,
                 "🎵 Media command sent."
             )
+
+        if intent == "spotify_play":
+            return f"🎵 Playing on Spotify: {argumento}." if argumento else "🎵 Starting Spotify playback."
+
+        if intent == "youtube_playlist":
+            return "⚽ Opening FuteParódias on YouTube."
 
         return "Done. Command sent to the PC."
 
@@ -582,6 +596,12 @@ def resposta_acao_local(
                 "🎵 Comando multimedia enviado."
             )
 
+        if intent == "spotify_play":
+            return f"🎵 Reproduciendo en Spotify: {argumento}." if argumento else "🎵 Iniciando reproducción en Spotify."
+
+        if intent == "youtube_playlist":
+            return "⚽ Abriendo FuteParódias en YouTube."
+
         return "Listo. Comando enviado al PC."
 
     if intent == "lock_screen":
@@ -602,6 +622,12 @@ def resposta_acao_local(
             target,
             "🎵 Controle de mídia enviado."
         )
+
+    if intent == "spotify_play":
+        return f"🎵 Tocando no Spotify: {argumento}." if argumento else "🎵 Iniciando reprodução no Spotify."
+
+    if intent == "youtube_playlist":
+        return "⚽ Abrindo as FuteParódias no YouTube."
 
     return "Fechou. Comando enviado para o PC."
 
@@ -1230,7 +1256,13 @@ send_whatsapp
 → Enviar WhatsApp.
 
 media_control
-→ Controlar mídia.
+→ Controlar mídia já em reprodução.
+
+spotify_play
+→ Abrir uma playlist do Spotify e iniciar a reprodução.
+
+youtube_playlist
+→ Abrir uma playlist específica do YouTube cadastrada nas Skills.
 
 set_volume
 → Alterar volume.
@@ -1283,6 +1315,17 @@ argumento de 0 a 100.
 10. media_control:
 target = play_pause, next ou prev.
 
+10.1. spotify_play:
+- Use quando Gustavo pedir para tocar/reproduzir uma playlist do Spotify.
+- target = "spotify".
+- argumento = nome, apelido ou URL/URI da playlist.
+- NÃO use media_control para pedidos de playlist.
+
+10.2. youtube_playlist:
+- Use quando Gustavo pedir para abrir/tocar as FuteParódias no YouTube.
+- target = "futeparodias".
+- argumento = URL da playlist ou null se a playlist for conhecida pela Skill.
+
 11. open_app:
 target identifica o aplicativo ou site.
 
@@ -1300,7 +1343,31 @@ argumento = texto exato solicitado.
 alguma coisa, preserve exatamente o texto solicitado em
 "argumento".
 
-15. Se Gustavo pedir para abrir o Spotify:
+15. Se Gustavo pedir para tocar/reproduzir uma playlist do Spotify, use:
+intent = "spotify_play"
+target = "spotify"
+argumento = nome, apelido, URL ou URI da playlist.
+
+Exemplos:
+"Toca minha playlist de rock"
+→ spotify_play / spotify / "rock"
+
+"Coloca um rock aí pra tropa"
+→ spotify_play / spotify / "rock"
+
+15.1. Se Gustavo pedir para abrir a playlist de FuteParódias no YouTube:
+intent = "youtube_playlist"
+target = "futeparodias"
+argumento = null.
+
+Exemplos:
+"Abre minhas FuteParódias"
+"Coloca as FuteParódias aí"
+"Abre a playlist de FuteParódias"
+
+15.2. Só use media_control quando Gustavo pedir controle da reprodução atual, como pausar, continuar, próxima ou anterior.
+
+16. Se Gustavo pedir para abrir o Spotify:
 intent = "open_app"
 target = "spotify"
 argumento = null.
@@ -1349,6 +1416,7 @@ FORMATO JSON OBRIGATÓRIO
         {{
             "intent": "open_app" | "open_and_search" |
                        "send_whatsapp" | "media_control" |
+                       "spotify_play" | "youtube_playlist" |
                        "set_volume" | "restart" |
                        "shutdown" | "lock_screen" |
                        "chat" | "web_search" | "unknown",
