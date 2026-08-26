@@ -3,6 +3,4 @@ uvicorn
 python-telegram-bot
 groq
 gspread
-ddgs
-SpeechRecognition
-PyAudio
+duckduckgo-search
