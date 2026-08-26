@@ -159,6 +159,12 @@ Sua personalidade deve ser:
 - Se Gustavo estiver frustrado ou irritado, responda de maneira
   tranquila e compreensiva.
 - Se Gustavo estiver falando normalmente, converse normalmente.
+- Entenda o contexto da conversa, inclusive mensagens curtas de continuação.
+- Se Gustavo disser "obrigado", "valeu", "obg", "brigado", "tamo junto" ou equivalente,
+  responda naturalmente em vez de tratar a mensagem como um novo comando.
+- Se Gustavo fizer uma continuação como "e agora?", "beleza", "show", "fechou",
+  "qual foi?", "isso aí" ou equivalente, use o contexto recente da conversa para
+  entender a intenção.
 
 IMPORTANTE:
 
@@ -1398,16 +1404,22 @@ retorne uma ação para cada uma.
 20. Para uma conversa normal:
 retorne apenas uma ação "chat".
 
-21. Para uma pesquisa:
+21. Mensagens de agradecimento, confirmação social ou continuação contextual
+como "obrigado", "valeu", "obg", "brigado", "fechou", "show", "beleza",
+"e agora?" e equivalentes devem usar "chat", aproveitando o contexto recente.
+Não transforme essas mensagens em ação local.
+
+
+22. Para uma pesquisa:
 retorne apenas uma ação "web_search",
 a menos que Gustavo também tenha pedido explicitamente
 outras ações separadas.
 
-22. Se houver restart/shutdown junto com outras ações:
+23. Se houver restart/shutdown junto com outras ações:
 retorne todas elas normalmente.
 O sistema externo cuidará da confirmação da ação crítica.
 
-23. Só salve fatos úteis e relativamente permanentes.
+24. Só salve fatos úteis e relativamente permanentes.
 
 ============================================================
 FORMATO JSON OBRIGATÓRIO
@@ -1555,7 +1567,11 @@ def gerar_resposta_chat(
 
 Agora converse diretamente com Gustavo.
 
-Responda à mensagem dele de maneira natural.
+Responda à mensagem dele de maneira natural, usando o contexto recente quando
+a mensagem depender de uma interação anterior. Mensagens curtas como
+"obrigado", "valeu", "obg", "brigado", "fechou", "show" ou "beleza" devem ser
+tratadas como continuação social da conversa, e não como pedido de ação.
+
 
 Não mencione:
 - prompts;
@@ -2485,8 +2501,15 @@ async def processar_entrada_voz(
         f"[VOICE] Entrada recebida | Origem: {origem_dispositivo} | Texto: {texto}"
     )
 
-    # O chat_id -1 impede mistura com o histórico do Telegram.
+    # O histórico de voz é separado do Telegram, mas é persistido durante
+    # a execução do serviço para permitir continuidade contextual.
     voice_chat_id = f"voice:{origem_dispositivo}"
+
+    adicionar_contexto(
+        voice_chat_id,
+        "user",
+        texto
+    )
 
     analise = await asyncio.to_thread(
         analisar_intencao,
@@ -2506,6 +2529,12 @@ async def processar_entrada_voz(
             texto,
             voice_chat_id
         )
+        adicionar_contexto(
+            voice_chat_id,
+            "assistant",
+            resposta
+        )
+
         return {
             "ok": True,
             "response": resposta,
@@ -2595,9 +2624,21 @@ async def processar_entrada_voz(
             respostas.append(resposta)
             continue
 
+    resposta_final = (
+        "\n".join(respostas)
+        if respostas
+        else "Comando processado."
+    )
+
+    adicionar_contexto(
+        voice_chat_id,
+        "assistant",
+        resposta_final
+    )
+
     return {
         "ok": True,
-        "response": "\n".join(respostas) if respostas else "Comando processado.",
+        "response": resposta_final,
         "actions": executadas
     }
 
